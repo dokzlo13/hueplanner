@@ -5,7 +5,9 @@ from contextlib import suppress
 
 import pytz
 import structlog
+import uvloop
 
+from hueplanner import settings
 from hueplanner.geo import get_location
 from hueplanner.hue import HueBridgeFactory
 from hueplanner.logging_conf import configure_logging
@@ -22,7 +24,6 @@ from hueplanner.planner import (
 )
 from hueplanner.scheduler import Scheduler
 from hueplanner.time_parser import TimeParser
-from hueplanner import settings
 
 logger = structlog.getLogger(__name__)
 
@@ -30,7 +31,7 @@ STOP_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 
 
 async def main(loop):
-    configure_logging("debug")
+    configure_logging(settings.LOG_LEVEL, console_colors=settings.LOG_COLORS)
 
     # Global stop event to stop 'em all!
     stop_event = asyncio.Event()
@@ -154,14 +155,23 @@ async def main(loop):
 
     await evaluate_plan()
 
-    async def periodic_print_schedule(stop_event, sleep):
-        while not stop_event.is_set():
-            logger.debug("Current schedule:")
-            print(scheduler)
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), sleep)
+    if settings.PRINT_SCHEDULE_INTERVAL > 0:
+        logger.info("Starting periodic schedule printing")
 
-    tasks.add(asyncio.create_task(periodic_print_schedule(stop_event, 60), name="schedule_periodic_print"))
+        async def periodic_print_schedule(stop_event, sleep):
+            while not stop_event.is_set():
+                logger.debug("Current schedule:")
+                print(scheduler, flush=True)
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), sleep)
+
+        tasks.add(
+            asyncio.create_task(
+                periodic_print_schedule(stop_event, settings.PRINT_SCHEDULE_INTERVAL),
+                name="schedule_periodic_print",
+            )
+        )
+
     tasks.add(asyncio.create_task(stop_event.wait(), name="stop_event_wait"))
     logger.info("Tasks started, waiting for termination signal.")
     await wait_tasks_shutdown()
@@ -171,5 +181,9 @@ async def main(loop):
 
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(main(loop))
+    if sys.version_info >= (3, 11):
+        with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+            runner.run(main(runner.get_loop()))
+    else:
+        event_loop = uvloop.new_event_loop()
+        event_loop.run_until_complete(main(event_loop))

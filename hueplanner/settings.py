@@ -1,9 +1,8 @@
 import os
 import typing
 
-import structlog
 import environs
-
+import structlog
 
 logger = structlog.getLogger(__name__)
 
@@ -30,9 +29,15 @@ class Env(environs.Env):
 env = Env()
 env.read_env()
 
+LOG_LEVEL = env("LOG_LEVEL", "info")
+LOG_COLORS = env.bool("LOG_COLORS", True)
+
 HUE_BRIDGE_ADDR = env("HUE_BRIDGE_ADDR")
 HUE_BRIDGE_USERNAME = env("HUE_BRIDGE_USERNAME")
+
 GEO_LOCATION_NAME = env("GEO_LOCATION_NAME")
+
+PRINT_SCHEDULE_INTERVAL = env.int("PRINT_SCHEDULE_INTERVAL", 0)
 
 # TODO: health check
 HEALTHCHECK_SERVER_HOST = env("HEALTHCHECK_SERVER_HOST", "0.0.0.0")
