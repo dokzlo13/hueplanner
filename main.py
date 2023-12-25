@@ -22,6 +22,7 @@ from hueplanner.planner import (
 )
 from hueplanner.scheduler import Scheduler
 from hueplanner.time_parser import TimeParser
+from hueplanner import settings
 
 logger = structlog.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def main(loop):
     for sig in STOP_SIGNALS:
         loop.add_signal_handler(sig, stop_all)
 
-    bridge_factory = HueBridgeFactory(address="192.168.10.12", access_token="JxDOFTiu4rtEUo3YuRS2GQ7bT7b67CvLFdx6V1lO")
+    bridge_factory = HueBridgeFactory(address=settings.HUE_BRIDGE_ADDR, access_token=settings.HUE_BRIDGE_USERNAME)
     bridge_v2 = bridge_factory.api_v2()
     await bridge_v2.connect()
 
@@ -83,7 +84,7 @@ async def main(loop):
             except asyncio.CancelledError:
                 logger.warning(f"Task {task.get_name()!r} terminated")
 
-    location = get_location("Espoo", "Finland")
+    location = get_location(settings.GEO_LOCATION_NAME)
     tz = pytz.timezone(location.timezone)
 
     # Running scheduler
@@ -104,6 +105,7 @@ async def main(loop):
             logger.debug("Executing closest previous job to current time", job=job)
             await job.execute(off_schedule=True)
 
+    # TODO: Plan parser
     async def evaluate_plan():
         tp = TimeParser.from_location(location)
         for k, v in tp.variables.items():
