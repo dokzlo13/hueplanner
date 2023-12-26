@@ -87,11 +87,21 @@ class HueBridgeV1:
         return items
 
     # logic-related api
-    async def switch_light(self, group_id: int | str, on: bool = True) -> Group:
-        body: dict[str, Any] = {"on": on}
+    # async def switch_light(self, group_id: int | str, on: bool = True, scene: str | None = None) -> Group:
+    #     body: dict[str, Any] = {"on": on}
+    #     if scene is not None:
+    #         body["scene"] = scene
+    #     resp = await self.session.put(
+    #         self._api_url / f"groups/{group_id}/action",
+    #         json=body,
+    #     )
+    #     resp.raise_for_status()
+    #     return await resp.json()
+
+    async def send_group_action(self, group_id: int | str, action: dict[str, Any]):
         resp = await self.session.put(
             self._api_url / f"groups/{group_id}/action",
-            json=body,
+            json=action,
         )
         resp.raise_for_status()
         return await resp.json()

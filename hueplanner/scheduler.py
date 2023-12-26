@@ -27,6 +27,7 @@ class Job:
         alias: str,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
+        tags: set[str],
         tz: datetime.tzinfo | None,
     ):
         self.next_run = next_run
@@ -35,6 +36,7 @@ class Job:
         self.max_runs = max_runs
         self.retries = retries
         self.alias = alias
+        self.tags = tags
         self.tz = tz
 
         self.args = args
@@ -44,6 +46,9 @@ class Job:
         self.run_count = 0
         self.success_count = 0
         self.fail_count = 0
+
+    def match_tags(self, tags: set[str]) -> bool:
+        return tags.issubset(self.tags)
 
     def must_run(self):
         if self.max_runs is not None:
@@ -160,14 +165,13 @@ class Scheduler:
         worker_ready.set()
         while not stop_event.is_set():
             job = await self.queue.get()  # Wait for a job from the queue
-            logger.debug("Executing job in worker", id=name)
+            logger.debug("Executing job in worker", id=name, alias=job.alias)
             await self._run_job(job)  # Run the job
             self.queue.task_done()  # Indicate the job is done
 
     def __str__(self) -> str:
         # Scheduler meta heading
         scheduler_headings = "Scheduler Jobs\n\n"
-
         # Define column alignments, widths, and names
         c_align = ("<", "<", "<", "<", ">", ">")
         c_width = (8, 20, 19, 16, 25, 10)
@@ -212,6 +216,7 @@ class Scheduler:
         alias: str | None = None,
         args: tuple[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        tags: set[str] | None = None,
     ):
         alias = alias or coro.__name__
         original_alias = alias
@@ -234,6 +239,19 @@ class Scheduler:
                     f"Time {time} has already passed. Scheduling {alias!r} for the next day at {scheduled_time}."
                 )
             next_run = scheduled_time
+        logger.debug(
+            "Scheduling task",
+            coro=coro,
+            alias=alias,
+            next_run=str(next_run),
+            interval=interval,
+            max_runs=max_runs,
+            retries=retries,
+            args=args,
+            kwargs=kwargs,
+            tags=tags,
+            tz=self.tz,
+        )
 
         job = Job(
             next_run,
@@ -244,6 +262,7 @@ class Scheduler:
             alias,
             args if args is not None else tuple(),
             kwargs if kwargs is not None else {},
+            tags=tags if tags is not None else set(),
             tz=self.tz,
         )
         async with self.lock:
@@ -260,6 +279,7 @@ class Scheduler:
         alias: str | None = None,
         args: tuple[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        tags: set[str] | None = None,
     ):
         await self._schedule(
             coro,
@@ -270,6 +290,7 @@ class Scheduler:
             alias=alias,
             args=args,
             kwargs=kwargs,
+            tags=tags,
         )
 
     async def once(
@@ -279,8 +300,9 @@ class Scheduler:
         alias: str | None = None,
         args: tuple[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        tags: set[str] | None = None,
     ):
-        await self._schedule(coro, time, max_runs=1, alias=alias, args=args, kwargs=kwargs)
+        await self._schedule(coro, time, max_runs=1, alias=alias, args=args, kwargs=kwargs, tags=tags)
 
     async def daily(
         self,
@@ -289,8 +311,9 @@ class Scheduler:
         alias: str | None = None,
         args: tuple[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        tags: set[str] | None = None,
     ):
-        await self._schedule(coro, time, datetime.timedelta(days=1), alias=alias, args=args, kwargs=kwargs)
+        await self._schedule(coro, time, datetime.timedelta(days=1), alias=alias, args=args, kwargs=kwargs, tags=tags)
 
     async def hourly(
         self,
@@ -299,8 +322,9 @@ class Scheduler:
         alias: str | None = None,
         args: tuple[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        tags: set[str] | None = None,
     ):
-        await self._schedule(coro, time, datetime.timedelta(hours=1), alias=alias, args=args, kwargs=kwargs)
+        await self._schedule(coro, time, datetime.timedelta(hours=1), alias=alias, args=args, kwargs=kwargs, tags=tags)
 
     async def minutely(
         self,
@@ -309,8 +333,11 @@ class Scheduler:
         alias: str | None = None,
         args: tuple[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        tags: set[str] | None = None,
     ):
-        await self._schedule(coro, time, datetime.timedelta(minutes=1), alias=alias, args=args, kwargs=kwargs)
+        await self._schedule(
+            coro, time, datetime.timedelta(minutes=1), alias=alias, args=args, kwargs=kwargs, tags=tags
+        )
 
     async def remove_job(self, alias: str):
         # Find and remove the job from both the heap and the lookup dictionary
@@ -332,13 +359,7 @@ class Scheduler:
     def total_jobs(self) -> int:
         return len(self.jobs)
 
-    async def next_job(self) -> Job:
-        async with self.lock:
-            job = heapq.heappop(self.jobs)
-            heapq.heappush(self.jobs, job)
-        return job
-
-    async def next_closest_job(self, time: datetime.time | None = None) -> Job | None:
+    async def next_closest_job(self, time: datetime.time | None = None, tags: set[str] | None = None) -> Job | None:
         if time is None:
             now = datetime.datetime.now(tz=self.tz).time()  # Current time, ignore date
         else:
@@ -348,6 +369,8 @@ class Scheduler:
 
         async with self.lock:
             for job in self.jobs:
+                if tags is not None and not job.match_tags(tags):
+                    continue
                 job_time = job.next_run.time()
                 today_job_run = datetime.datetime.combine(datetime.date.today(), job_time, tzinfo=self.tz)
                 today_now = datetime.datetime.combine(datetime.date.today(), now, tzinfo=self.tz)
@@ -360,7 +383,7 @@ class Scheduler:
 
         return closest_next_job
 
-    async def previous_closest_job(self, time: datetime.time | None = None) -> Job | None:
+    async def previous_closest_job(self, time: datetime.time | None = None, tags: set[str] | None = None) -> Job | None:
         if time is None:
             now = datetime.datetime.now(tz=self.tz).time()  # Current time, ignore date
         else:
@@ -370,6 +393,8 @@ class Scheduler:
 
         async with self.lock:
             for job in self.jobs:
+                if tags is not None and not job.match_tags(tags):
+                    continue
                 job_time = job.next_run.time()
                 today_job_run = datetime.datetime.combine(datetime.date.today(), job_time, tzinfo=self.tz)
                 today_now = datetime.datetime.combine(datetime.date.today(), now, tzinfo=self.tz)

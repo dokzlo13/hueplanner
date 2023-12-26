@@ -1,14 +1,14 @@
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timedelta, time
+from datetime import datetime, time, timedelta
 from typing import Protocol
-import pytz
+
 import structlog
 
+from ..hue.v2.models import HueEvent
 from .actions import EvaluatedAction
 from .context import Context
-from ..hue.v2.models import HueEvent
 
 logger = structlog.getLogger(__name__)
 
@@ -27,10 +27,16 @@ class PlanTrigger(Protocol):
 class PlanTriggerOnce(PlanTrigger):
     act_on: time
     alias: str | None = None
+    scheduler_tag: str | None = None
 
     async def apply_trigger(self, context: Context, action: EvaluatedAction):
         logger.debug("Applying once trigger", act_on=str(self.act_on))
-        await context.scheduler.once(action, self.act_on, alias=self.alias)
+        await context.scheduler.once(
+            action,
+            self.act_on,
+            alias=self.alias,
+            tags={self.scheduler_tag} if self.scheduler_tag is not None else None,
+        )
 
 
 @dataclass

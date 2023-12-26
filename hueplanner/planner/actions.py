@@ -141,18 +141,16 @@ class PlanActionActivateScene(PlanAction, Protocol):
         else:
             raise ValueError("Required scene not found")
 
-        async def _is_group_enabled(group_id):
-            group = await context.hue_client_v1.get_group(group_id)
-            print(group)
-            return group.state.any_on
-
         async def set_scene():
             context.current_scene = required_scene
-            if not (await _is_group_enabled(group_id=scene.group)):
-                logger.info("Scene not set, because group is not enabled", scene=str(scene))
+            log = logger.bind(scene_id=context.current_scene.id, scene_name=context.current_scene.name)
+            log.debug("Context current scene set to")
+            group = await context.hue_client_v1.get_group(scene.group)
+            if not group.state.any_on:
+                log.info("Scene not set, because group is not enabled", group_id=group.id, group_state=group.state)
                 return
             res = await context.hue_client_v1.activate_scene(required_scene.group, required_scene.id)
-            logger.info("Scene set", res=res, scene=str(scene))
+            log.info("Scene set", res=res)
 
         return set_scene
 
@@ -181,13 +179,49 @@ class PlanActionActivateSceneById(PlanActionActivateScene):
 
 @dataclass
 class PlanActionToggleCurrentScene(PlanAction):
-    transition_time: int | None = None
+    fallback_run_job_tag: str | None = None
 
     async def define_action(self, context: Context) -> EvaluatedAction:
+        async def run_previous_scheduled_job(tag: str):
+            job = await context.scheduler.previous_closest_job(tags={tag})
+            if job is None:
+                logger.warning("No previous closest job available by time")
+                job = await context.scheduler.next_closest_job(tags={tag})
+            if job is None:
+                logger.warning("No next closest job available by time")
+                return
+            logger.debug("Executing closest fallback job to current time", job=job)
+            await job.execute(off_schedule=True)
+
         async def toggle_current_scene():
+            if not context.current_scene:
+                if self.fallback_run_job_tag:
+                    await run_previous_scheduled_job(tag=self.fallback_run_job_tag)
             if not context.current_scene:
                 logger.error("Can't toggle scene, because it was not set yet")
                 return
-            await context.hue_client_v1.toggle_light(context.current_scene.group)
+            scene = context.current_scene
+            logger.debug(
+                "Context current scene obtained",
+                scene_id=scene.id,
+                scene_name=scene.name,
+            )
+            group = await context.hue_client_v1.get_group(scene.group)
+            logger.debug("Current group state", group_id=group.id, group_state=group.state)
+
+            # TODO: use models, not dict
+            if group.state.all_on:
+                action = {"on": False}
+                logger.info("Turning light off", group=scene.group)
+            else:
+                logger.info(
+                    "Turning light on and setting scene",
+                    group=scene.group,
+                    scene_id=scene.id,
+                    scene_name=scene.name,
+                )
+                action = {"on": True, "scene": scene.id}
+            result = await context.hue_client_v1.send_group_action(scene.group, action)
+            logger.debug("Scene toggled", result=result)
 
         return toggle_current_scene

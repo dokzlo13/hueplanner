@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
-
-import pytz
+import zoneinfo
 from astral.location import Location
 
 
@@ -12,7 +11,7 @@ class TimeParser:
     def from_location(cls, location: Location, now: datetime | None = None) -> TimeParser:
         variables = {}
         if now is None:
-            now = datetime.now(tz=pytz.timezone(location.timezone))
+            now = datetime.now(tz=zoneinfo.ZoneInfo(location.timezone))
         dt: datetime
         for tag, dt in location.sun(date=now).items():
             variables[tag] = dt

@@ -2,8 +2,8 @@ import asyncio
 import signal
 import sys
 from contextlib import suppress
+from zoneinfo import ZoneInfo
 
-import pytz
 import structlog
 import uvloop
 
@@ -86,10 +86,10 @@ async def main(loop):
                 logger.warning(f"Task {task.get_name()!r} terminated")
 
     location = get_location(settings.GEO_LOCATION_NAME)
-    tz = pytz.timezone(location.timezone)
-
+    tz = ZoneInfo(location.timezone)
     # Running scheduler
     scheduler = Scheduler(tz=tz)
+    logger.info("Using timezone", tz=repr(scheduler.tz))
     tasks.add(asyncio.create_task(scheduler.run(stop_event), name="scheduler_task"))
 
     context = Context(
@@ -101,35 +101,42 @@ async def main(loop):
     )
 
     async def run_previous_scheduled_job():
-        job = await scheduler.previous_closest_job()
-        if job is not None:
-            logger.debug("Executing closest previous job to current time", job=job)
-            await job.execute(off_schedule=True)
+        job = await scheduler.previous_closest_job(tags={"scene"})
+        if job is None:
+            logger.warning("No previous closest job available by time")
+            job = await scheduler.next_closest_job(tags={"scene"})
+        if job is None:
+            logger.warning("No next closest job available by time")
+            return
+        logger.debug("Executing closest scene job to current time", job=job)
+        await job.execute(off_schedule=True)
 
     # TODO: Plan parser
     async def evaluate_plan():
         tp = TimeParser.from_location(location)
         for k, v in tp.variables.items():
-            logger.debug(f"Astronomical events for today: {k:<10}: {str(v)}")
+            logger.info(f"Astronomical events for today: {k:<10}: {str(v)}")
         plan = [
             PlanEntry(
-                trigger=PlanTriggerOnce(act_on=tp.parse("@dawn").timetz(), alias="@dawn"),
+                trigger=PlanTriggerOnce(act_on=tp.parse("@dawn").timetz(), alias="@dawn", scheduler_tag="scene"),
                 action=PlanActionActivateSceneByName(name="Energize"),
             ),
             PlanEntry(
-                trigger=PlanTriggerOnce(act_on=tp.parse("@noon").timetz(), alias="@noon"),
+                trigger=PlanTriggerOnce(act_on=tp.parse("@noon").timetz(), alias="@noon", scheduler_tag="scene"),
                 action=PlanActionActivateSceneByName(name="Concentrate"),
             ),
             PlanEntry(
-                trigger=PlanTriggerOnce(act_on=tp.parse("@sunset - 2H").timetz(), alias="@sunset - 2H"),
+                trigger=PlanTriggerOnce(act_on=tp.parse("@sunset - 2H").timetz(), alias="@sunset - 2H", scheduler_tag="scene"),
                 action=PlanActionActivateSceneByName(name="Read"),
             ),
             PlanEntry(
-                trigger=PlanTriggerOnce(act_on=tp.parse("@dusk").timetz(), alias="@dusk"),
+                trigger=PlanTriggerOnce(act_on=tp.parse("@dusk").timetz(), alias="@dusk", scheduler_tag="scene"),
                 action=PlanActionActivateSceneByName(name="Relax"),
             ),
             PlanEntry(
-                trigger=PlanTriggerOnce(act_on=tp.parse("@midnight - 30M").timetz(), alias="@midnight - 30M"),
+                trigger=PlanTriggerOnce(
+                    act_on=tp.parse("@midnight - 30M").timetz(), alias="@midnight - 30M", scheduler_tag="scene"
+                ),
                 action=PlanActionActivateSceneByName(name="Rest"),
             ),
             # Button toggle lights
@@ -137,12 +144,7 @@ async def main(loop):
                 trigger=PlanTriggerOnHueButtonEvent(
                     action="initial_press", resource_id="1e53050b-ca07-44f3-977f-ab0477e5e911"
                 ),
-                action=PlanActionToggleCurrentScene(),
-            ),
-            # This task will set scene which is nearest to current schedule (previous)
-            PlanEntry(
-                trigger=PlanTriggerImmediately(),
-                action=PlanActionCallback(run_previous_scheduled_job),
+                action=PlanActionToggleCurrentScene(fallback_run_job_tag="scene"),
             ),
             # Re-evaluate plan on midnight
             PlanEntry(
@@ -152,6 +154,8 @@ async def main(loop):
         ]
         await context.reset()
         await Planner(context).apply_plan(plan)
+        logger.info("New schedule")
+        print(scheduler)
 
     await evaluate_plan()
 

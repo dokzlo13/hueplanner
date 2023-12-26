@@ -72,5 +72,5 @@ class HueEventStream:
         event_id = id_part.split(": ", 1)[1]
         raw_json_data = data_part.split(": ", 1)[1]
         json_data = json.loads(raw_json_data)
-        logger.debug("Received event:", id=event_id, data=json_data)
+        # logger.debug("Received event:", id=event_id, data=json_data)
         return HueEvent(id=event_id, data=json_data)
