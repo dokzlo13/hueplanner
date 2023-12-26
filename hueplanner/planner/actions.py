@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import structlog
 
@@ -183,14 +185,25 @@ class PlanActionToggleCurrentScene(PlanAction):
 
     async def define_action(self, context: Context) -> EvaluatedAction:
         async def run_previous_scheduled_job(tag: str):
-            job = await context.scheduler.previous_closest_job(tags={tag})
-            if job is None:
+            logger.debug("Looking for nearest previous job")
+            prev_job = await context.scheduler.previous_closest_job(tags={tag})
+            if prev_job is not None:
+                logger.info("Found closest previous job", job=prev_job)
+            else:
                 logger.warning("No previous closest job available by time")
-                job = await context.scheduler.next_closest_job(tags={tag})
-            if job is None:
+                
+            next_job = await context.scheduler.next_closest_job(tags={tag})
+            if next_job is not None:
+                logger.info("Found closest next job", job=next_job)
+            else:
                 logger.warning("No next closest job available by time")
+
+            job = prev_job if prev_job else next_job
+            if not job:
+                # If both are unavailable, log error and return
+                logger.error("No closest jobs available")
                 return
-            logger.debug("Executing closest fallback job to current time", job=job)
+            logger.debug("Executing closest job to current time (off schedule)", job=job)
             await job.execute(off_schedule=True)
 
         async def toggle_current_scene():

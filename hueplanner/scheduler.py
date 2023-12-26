@@ -365,20 +365,36 @@ class Scheduler:
         else:
             now = time
         closest_next_job = None
-        smallest_next_diff = datetime.timedelta.max  # Start with the max possible timedelta
+        shortest_time_diff = datetime.timedelta.max  # Initialize with max timedelta
 
         async with self.lock:
             for job in self.jobs:
                 if tags is not None and not job.match_tags(tags):
                     continue
-                job_time = job.next_run.time()
-                today_job_run = datetime.datetime.combine(datetime.date.today(), job_time, tzinfo=self.tz)
-                today_now = datetime.datetime.combine(datetime.date.today(), now, tzinfo=self.tz)
-                diff = today_job_run - today_now  # Calculate the difference
 
-                # If the difference is positive and smaller than the smallest found so far
-                if datetime.timedelta(0) <= diff < smallest_next_diff:
-                    smallest_next_diff = diff
+                job_time = job.next_run.timetz()  # Get the time of the next run
+
+                # Convert times to timedelta since midnight to calculate duration
+                now_delta = datetime.timedelta(
+                    hours=now.hour, minutes=now.minute, seconds=now.second, microseconds=now.microsecond
+                )
+                job_time_delta = datetime.timedelta(
+                    hours=job_time.hour,
+                    minutes=job_time.minute,
+                    seconds=job_time.second,
+                    microseconds=job_time.microsecond,
+                )
+
+                # Calculate time difference, considering next day rollover
+                if job_time < now:
+                    # if job time is earlier in the day, consider it as next day for the calculation
+                    time_diff = datetime.timedelta(days=1) + job_time_delta - now_delta
+                else:
+                    time_diff = job_time_delta - now_delta
+
+                # Update closest job if this job's time is closer and is in the future
+                if datetime.timedelta() <= time_diff < shortest_time_diff:
+                    shortest_time_diff = time_diff
                     closest_next_job = job
 
         return closest_next_job
@@ -389,20 +405,36 @@ class Scheduler:
         else:
             now = time
         closest_prev_job = None
-        smallest_prev_diff = datetime.timedelta.max  # Start with the max possible timedelta
+        shortest_time_diff = datetime.timedelta.max  # Initialize with max timedelta
 
         async with self.lock:
             for job in self.jobs:
                 if tags is not None and not job.match_tags(tags):
                     continue
-                job_time = job.next_run.time()
-                today_job_run = datetime.datetime.combine(datetime.date.today(), job_time, tzinfo=self.tz)
-                today_now = datetime.datetime.combine(datetime.date.today(), now, tzinfo=self.tz)
-                diff = today_now - today_job_run  # Calculate the difference
 
-                # If the difference is positive and smaller than the smallest found so far
-                if datetime.timedelta(0) <= diff < smallest_prev_diff:
-                    smallest_prev_diff = diff
+                job_time = job.next_run.timetz()  # Get the time of the next run
+
+                # Convert times to timedelta since midnight to calculate duration
+                now_delta = datetime.timedelta(
+                    hours=now.hour, minutes=now.minute, seconds=now.second, microseconds=now.microsecond
+                )
+                job_time_delta = datetime.timedelta(
+                    hours=job_time.hour,
+                    minutes=job_time.minute,
+                    seconds=job_time.second,
+                    microseconds=job_time.microsecond,
+                )
+
+                # Calculate time difference for past times
+                if job_time > now:
+                    # if job time is later in the day, consider it as the previous day for calculation
+                    time_diff = now_delta + datetime.timedelta(days=1) - job_time_delta
+                else:
+                    time_diff = now_delta - job_time_delta
+
+                # Update closest previous job if this job's time is closer and is in the past
+                if datetime.timedelta() < time_diff < shortest_time_diff:
+                    shortest_time_diff = time_diff
                     closest_prev_job = job
 
         return closest_prev_job
