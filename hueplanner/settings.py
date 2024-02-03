@@ -15,7 +15,7 @@ class Env(environs.Env):
         verbose: bool = False,
         override: bool = False,
     ) -> None:
-        env_files = ("settings.cfg", ".env")
+        env_files = (".env", "settings.cfg")
         for env_file in env_files:
             if os.path.isfile(env_file):
                 path = env_file
@@ -38,6 +38,8 @@ HUE_BRIDGE_USERNAME = env("HUE_BRIDGE_USERNAME")
 GEO_LOCATION_NAME = env("GEO_LOCATION_NAME")
 
 PRINT_SCHEDULE_INTERVAL = env.int("PRINT_SCHEDULE_INTERVAL", 0)
+
+DATABASE_PATH = env("DATABASE_PATH", None)
 
 # TODO: health check
 HEALTHCHECK_SERVER_HOST = env("HEALTHCHECK_SERVER_HOST", "0.0.0.0")

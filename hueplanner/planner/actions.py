@@ -17,13 +17,11 @@ logger = structlog.getLogger(__name__)
 
 
 class EvaluatedAction(Protocol):
-    def __call__(self) -> Awaitable[None]:
-        ...
+    def __call__(self) -> Awaitable[None]: ...
 
 
 class PlanAction(Protocol):
-    async def define_action(self, context: Context) -> EvaluatedAction:
-        ...
+    async def define_action(self, context: Context) -> EvaluatedAction: ...
 
     def chain(self, other: PlanAction) -> PlanAction:
         return PlanActionSequence(self, other)
@@ -43,7 +41,12 @@ class PlanAction(Protocol):
 class PlanActionSequence(PlanAction):
     def __init__(self, *actions) -> None:
         super().__init__()
-        self._actions: tuple[PlanAction, ...] = actions
+        self._actions: tuple[PlanAction, ...] = tuple(item for a in actions for item in self._unpack_nested_sequence(a))
+
+    def _unpack_nested_sequence(self, action: PlanAction) -> tuple[PlanAction, ...]:
+        if isinstance(action, PlanActionSequence):
+            return action._actions
+        return (action,)
 
     async def define_action(self, context: Context) -> EvaluatedAction:
         evaluated_actions: list[EvaluatedAction] = []
@@ -131,22 +134,23 @@ class PlanActionCallback(PlanAction):
 
 
 @dataclass
-class PlanActionActivateScene(PlanAction, Protocol):
-    transition_time: int | None = None
+class PlanActionStoreScene(PlanAction, Protocol):
+    store_as: str
 
     async def define_action(self, context: Context) -> EvaluatedAction:
         required_scene = None
         for scene in await context.hue_client_v1.get_scenes():
             if self.match_scene(scene):
                 required_scene = scene.model_copy()  # ensure we don't loose model in closure below
+                logger.info("Found required scene", scene=repr(required_scene), action=repr(self))
                 break
         else:
             raise ValueError("Required scene not found")
 
         async def set_scene():
-            context.current_scene = required_scene
-            log = logger.bind(scene_id=context.current_scene.id, scene_name=context.current_scene.name)
-            log.debug("Context current scene set to")
+            await context.scenes.set(self.store_as, required_scene)
+            log = logger.bind(scene_id=required_scene.id, scene_name=required_scene.name)
+            log.debug("Context current scene set to", scene=required_scene)
             group = await context.hue_client_v1.get_group(scene.group)
             if not group.state.any_on:
                 log.info("Scene not set, because group is not enabled", group_id=group.id, group_state=group.state)
@@ -156,21 +160,26 @@ class PlanActionActivateScene(PlanAction, Protocol):
 
         return set_scene
 
-    def match_scene(self, scene: Scene) -> bool:
-        ...
+    def match_scene(self, scene: Scene) -> bool: ...
 
 
 @dataclass
-class PlanActionActivateSceneByName(PlanActionActivateScene):
-    name: str = ""
+class PlanActionStoreSceneByName(PlanActionStoreScene):
+    name: str
+    group: int | None = None
 
     def match_scene(self, scene: Scene) -> bool:
-        return scene.name == self.name
+        if scene.name == self.name:
+            if not self.group:
+                return True
+            if scene.group == self.group:
+                return True
+        return False
 
 
 @dataclass
-class PlanActionActivateSceneById(PlanActionActivateScene):
-    id: str = ""
+class PlanActionStoreSceneById(PlanActionStoreScene):  # type: ignore
+    id: str
 
     def match_scene(self, scene: Scene) -> bool:
         return scene.id == self.id
@@ -180,44 +189,50 @@ class PlanActionActivateSceneById(PlanActionActivateScene):
 
 
 @dataclass
-class PlanActionToggleCurrentScene(PlanAction):
+class PlanActionToggleStoredScene(PlanAction):
+    stored_scene: str
     fallback_run_job_tag: str | None = None
 
+    @staticmethod
+    async def run_nearest_scheduled_job(context: Context, tag: str):
+        logger.debug("Looking for nearest previous job")
+        prev_job = await context.scheduler.previous_closest_job(tags={tag})
+        if prev_job is not None:
+            logger.info("Found closest previous job", job=prev_job)
+        else:
+            logger.warning("No previous closest job available by time")
+
+        next_job = await context.scheduler.next_closest_job(tags={tag})
+        if next_job is not None:
+            logger.info("Found closest next job", job=next_job)
+        else:
+            logger.warning("No next closest job available by time")
+
+        job = prev_job if prev_job else next_job
+        if not job:
+            # If both are unavailable, log error and return
+            logger.error("No closest jobs available")
+            return
+        logger.debug("Executing closest job to current time (off schedule)", job=job)
+        await job.execute(off_schedule=True)
+
     async def define_action(self, context: Context) -> EvaluatedAction:
-        async def run_previous_scheduled_job(tag: str):
-            logger.debug("Looking for nearest previous job")
-            prev_job = await context.scheduler.previous_closest_job(tags={tag})
-            if prev_job is not None:
-                logger.info("Found closest previous job", job=prev_job)
-            else:
-                logger.warning("No previous closest job available by time")
-                
-            next_job = await context.scheduler.next_closest_job(tags={tag})
-            if next_job is not None:
-                logger.info("Found closest next job", job=next_job)
-            else:
-                logger.warning("No next closest job available by time")
-
-            job = prev_job if prev_job else next_job
-            if not job:
-                # If both are unavailable, log error and return
-                logger.error("No closest jobs available")
-                return
-            logger.debug("Executing closest job to current time (off schedule)", job=job)
-            await job.execute(off_schedule=True)
-
         async def toggle_current_scene():
-            if not context.current_scene:
+            scene = await context.scenes.get(self.stored_scene)
+            if not scene:
+                logger.debug(
+                    "No current scene stored, performing fallback procedure", stored_scene_id=self.stored_scene
+                )
                 if self.fallback_run_job_tag:
-                    await run_previous_scheduled_job(tag=self.fallback_run_job_tag)
-            if not context.current_scene:
+                    await self.run_nearest_scheduled_job(context=context, tag=self.fallback_run_job_tag)
+                scene = await context.scenes.get(self.stored_scene)
+            if not scene:
                 logger.error("Can't toggle scene, because it was not set yet")
                 return
-            scene = context.current_scene
             logger.debug(
                 "Context current scene obtained",
-                scene_id=scene.id,
-                scene_name=scene.name,
+                stored_scene_id=self.stored_scene,
+                scene=scene,
             )
             group = await context.hue_client_v1.get_group(scene.group)
             logger.debug("Current group state", group_id=group.id, group_state=group.state)

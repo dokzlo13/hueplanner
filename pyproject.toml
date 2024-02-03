@@ -15,6 +15,7 @@ environs = "^9.5.0"
 structlog = "^23.2.0"
 uvloop = "^0.19.0"
 tzdata = "^2023.3"
+aiosqlite = "^0.19.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.1.2"

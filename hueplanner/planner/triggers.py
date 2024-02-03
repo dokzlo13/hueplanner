@@ -25,16 +25,18 @@ class PlanTrigger(Protocol):
 
 @dataclass
 class PlanTriggerOnce(PlanTrigger):
-    act_on: time
+    act_on: str
     alias: str | None = None
     scheduler_tag: str | None = None
 
     async def apply_trigger(self, context: Context, action: EvaluatedAction):
         logger.debug("Applying once trigger", act_on=str(self.act_on))
+        alias = self.alias if self.alias is not None else self.act_on
+        act_on_time = (await context.time_parser.parse(self.act_on)).timetz()
         await context.scheduler.once(
             action,
-            self.act_on,
-            alias=self.alias,
+            act_on_time,
+            alias=alias,
             tags={self.scheduler_tag} if self.scheduler_tag is not None else None,
         )
 

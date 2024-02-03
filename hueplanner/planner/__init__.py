@@ -1,10 +1,10 @@
 from .actions import (
     PlanAction,
-    PlanActionActivateSceneById,
-    PlanActionActivateSceneByName,
+    PlanActionStoreSceneById,
+    PlanActionStoreSceneByName,
     PlanActionCallback,
     PlanActionSequence,
-    PlanActionToggleCurrentScene,
+    PlanActionToggleStoredScene,
     PlanActionWithEvaluationCondition,
     PlanActionWithRuntimeCondition,
 )

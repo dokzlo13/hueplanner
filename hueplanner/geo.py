@@ -1,10 +1,11 @@
+from datetime import datetime, timedelta
+
 import astral
 import structlog
+import zoneinfo
 from astral.location import Location
 from geopy.geocoders import Nominatim
 from timezonefinder import TimezoneFinder
-
-from hueplanner.cache import LRUCacheDecorator
 
 logger = structlog.getLogger(__name__)
 
@@ -18,7 +19,6 @@ def get_timezone_from_coords(lat, lng):
     return timezone_str
 
 
-@LRUCacheDecorator(cache_size=10, cache_file="./.geocache/cache.db")
 def get_location(location_name: str) -> Location:
     """Resolve latitude, longitude, and timezone from city name and country"""
     # Construct the query with additional details if available
@@ -43,3 +43,14 @@ def get_location(location_name: str) -> Location:
             longitude=location.longitude,
         )
     )
+
+
+def astronomical_variables_from_location(location: Location, now: datetime | None = None) -> dict[str, datetime]:
+    variables: dict[str, datetime] = {}
+    if now is None:
+        now = datetime.now(tz=zoneinfo.ZoneInfo(location.timezone))
+    dt: datetime
+    for tag, dt in location.sun(date=now).items():
+        variables[tag] = dt
+    variables["midnight"] = location.midnight(date=now) + timedelta(days=1)
+    return variables

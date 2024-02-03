@@ -1,11 +1,16 @@
 import asyncio
-from ..scheduler import Scheduler
-from ..hue import HueBridgeV1, HueBridgeV2
-from ..hue.v1.models import Scene
-from astral.location import Location
+from datetime import datetime
+
 import structlog
 
+from ..hue import HueBridgeV1, HueBridgeV2
+from ..hue.v1.models import Scene
+from ..scheduler import Scheduler
+from ..storage.interface import IKeyValueCollection
+from ..time_parser import TimeParser
+
 logger = structlog.getLogger(__name__)
+
 
 class Context:
     def __init__(
@@ -14,16 +19,17 @@ class Context:
         scheduler: Scheduler,
         hue_client_v1: HueBridgeV1,
         hue_client_v2: HueBridgeV2,
-        location: Location,
+        scenes: IKeyValueCollection,
+        time_parser: TimeParser,
     ) -> None:
         self.stop_event = stop_event
         self.scheduler: Scheduler = scheduler
         self.hue_client_v1: HueBridgeV1 = hue_client_v1
         self.hue_client_v2: HueBridgeV2 = hue_client_v2
-        self.location: Location = location
+        self.scenes: IKeyValueCollection[str, Scene] = scenes
+        self.time_parser = time_parser
 
         # TODO: better way to manage global context
-        self.current_scene: Scene | None = None
         self.task_pool: set[asyncio.Task] = set()
 
     def finished(self) -> bool:

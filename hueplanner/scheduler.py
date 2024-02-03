@@ -53,6 +53,8 @@ class Job:
     def must_run(self):
         if self.max_runs is not None:
             return self.run_count < self.max_runs
+        if self.interval is None and self.run_count > 0:
+            return False
         return True
 
     async def execute(self, off_schedule: bool = False):
@@ -175,7 +177,7 @@ class Scheduler:
         # Define column alignments, widths, and names
         c_align = ("<", "<", "<", "<", ">", ">")
         c_width = (8, 20, 19, 16, 25, 10)
-        c_name = ("Type", "Function/Alias", "Due At", "TZ Info", "Due In", "Attempts")
+        c_name = ("Type", "Func/Alias", "Due At", "TZ Info", "Due In", "Attempts")
 
         # Create format string for each column
         form = [f"{{{idx}:{align}{width}}}" for idx, (align, width) in enumerate(zip(c_align, c_width))]
@@ -186,7 +188,7 @@ class Scheduler:
         job_table += fstring.format(*("-" * width for width in c_width))
 
         # Job rows
-        for job in sorted(self.jobs):
+        for job in sorted(self.jobs, key=lambda j: j.next_run):
             job_details = job._str(c_width)  # Pass column widths to job string representation
             job_table += fstring.format(*job_details)
 
@@ -445,7 +447,7 @@ class Scheduler:
         for i in range(self.worker_count):
             worker_ready = asyncio.Event()
             workers_ready.add(worker_ready)
-            name = f"worker-{i}"
+            name = f"scheduler-worker-{i}"
             workers.add(asyncio.create_task(self._worker(stop_event, worker_ready, name), name=name))
         await asyncio.gather(*[event.wait() for event in workers_ready])
         logger.debug("Workers pool created")
