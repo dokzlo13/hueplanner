@@ -17,3 +17,21 @@ from .triggers import (
     PlanTriggerOnHueButtonEvent,
     PlanTriggerPeriodic,
 )
+
+ACTION_CLASSES = [
+    PlanActionStoreSceneById,
+    PlanActionStoreSceneByName,
+    PlanActionSequence,
+    PlanActionToggleStoredScene,
+    ## This cannot be parsed from config yet
+    # PlanActionCallback,
+    # PlanActionWithEvaluationCondition,
+    # PlanActionWithRuntimeCondition,
+]
+
+TRIGGER_CLASSES = [
+    PlanTriggerImmediately,
+    PlanTriggerOnce,
+    PlanTriggerOnHueButtonEvent,
+    PlanTriggerPeriodic,
+]

@@ -17,7 +17,7 @@ class LightState(BaseModel):
     reachable: bool
 
 
-class Swupdate(BaseModel):
+class SwUpdate(BaseModel):
     state: str
     lastinstall: str
 
@@ -56,7 +56,7 @@ class Config(BaseModel):
 class Light(BaseModel):
     id: int = None  # type: ignore
     state: LightState
-    swupdate: Swupdate
+    swupdate: SwUpdate
     type: str
     name: str
     modelid: str

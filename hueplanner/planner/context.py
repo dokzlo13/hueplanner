@@ -53,3 +53,9 @@ class Context:
     def add_task_to_pool(self, task: asyncio.Task):
         self.task_pool.add(task)
         task.add_done_callback(self.task_pool.discard)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.shutdown()

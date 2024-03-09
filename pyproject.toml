@@ -16,6 +16,9 @@ structlog = "^23.2.0"
 uvloop = "^0.19.0"
 tzdata = "^2023.3"
 aiosqlite = "^0.19.0"
+pyyaml = "^6.0.1"
+pydantic-settings = "^2.2.1"
+tzlocal = "^5.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.1.2"

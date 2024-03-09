@@ -86,18 +86,6 @@ class HueBridgeV1:
             items.append(model)
         return items
 
-    # logic-related api
-    # async def switch_light(self, group_id: int | str, on: bool = True, scene: str | None = None) -> Group:
-    #     body: dict[str, Any] = {"on": on}
-    #     if scene is not None:
-    #         body["scene"] = scene
-    #     resp = await self.session.put(
-    #         self._api_url / f"groups/{group_id}/action",
-    #         json=body,
-    #     )
-    #     resp.raise_for_status()
-    #     return await resp.json()
-
     async def send_group_action(self, group_id: int | str, action: dict[str, Any]):
         resp = await self.session.put(
             self._api_url / f"groups/{group_id}/action",
@@ -105,10 +93,6 @@ class HueBridgeV1:
         )
         resp.raise_for_status()
         return await resp.json()
-
-    async def toggle_light(self, group_id: int | str) -> Group:
-        group = await self.get_group(group_id)
-        return await self.switch_light(group_id, not group.action.on)
 
     async def activate_scene(self, group_id: int | str, scene_id: str, transition_time: int | None = None):
         body: dict[str, Any] = {

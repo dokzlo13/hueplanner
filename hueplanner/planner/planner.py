@@ -9,7 +9,6 @@ from .triggers import PlanTrigger
 class PlanEntry:
     trigger: PlanTrigger
     action: PlanAction
-    tag: str | None = None
 
     async def apply(self, context: Context):
         action = await self.action.define_action(context)

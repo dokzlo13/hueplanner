@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Protocol
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from typing import Any, Awaitable, Callable, Protocol
 
 import structlog
+from pydantic import BaseModel
+from zoneinfo import ZoneInfo
 
 from ..hue.v1.models import Scene
 from .context import Context
+from .serializable import Serializable
 
 logger = structlog.getLogger(__name__)
 
@@ -42,6 +44,9 @@ class PlanActionSequence(PlanAction):
     def __init__(self, *actions) -> None:
         super().__init__()
         self._actions: tuple[PlanAction, ...] = tuple(item for a in actions for item in self._unpack_nested_sequence(a))
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(items=[" + ", ".join(repr(i) for i in self._actions) + "])"
 
     def _unpack_nested_sequence(self, action: PlanAction) -> tuple[PlanAction, ...]:
         if isinstance(action, PlanActionSequence):
@@ -164,9 +169,14 @@ class PlanActionStoreScene(PlanAction, Protocol):
 
 
 @dataclass
-class PlanActionStoreSceneByName(PlanActionStoreScene):
+class PlanActionStoreSceneByName(PlanActionStoreScene, Serializable):
     name: str
     group: int | None = None
+
+    class _Model(BaseModel):
+        store_as: str
+        name: str
+        group: int | None = None
 
     def match_scene(self, scene: Scene) -> bool:
         if scene.name == self.name:
@@ -178,8 +188,12 @@ class PlanActionStoreSceneByName(PlanActionStoreScene):
 
 
 @dataclass
-class PlanActionStoreSceneById(PlanActionStoreScene):  # type: ignore
+class PlanActionStoreSceneById(PlanActionStoreScene, Serializable):
     id: str
+
+    class _Model(BaseModel):
+        store_as: str
+        id: str
 
     def match_scene(self, scene: Scene) -> bool:
         return scene.id == self.id
@@ -189,9 +203,13 @@ class PlanActionStoreSceneById(PlanActionStoreScene):  # type: ignore
 
 
 @dataclass
-class PlanActionToggleStoredScene(PlanAction):
+class PlanActionToggleStoredScene(PlanAction, Serializable):
     stored_scene: str
-    fallback_run_job_tag: str | None = None
+    fallback_nearest_scheduler_job_tag: str | None = None
+
+    class _Model(BaseModel):
+        stored_scene: str
+        fallback_nearest_scheduler_job_tag: str | None = None
 
     @staticmethod
     async def run_nearest_scheduled_job(context: Context, tag: str):
@@ -220,11 +238,12 @@ class PlanActionToggleStoredScene(PlanAction):
         async def toggle_current_scene():
             scene = await context.scenes.get(self.stored_scene)
             if not scene:
-                logger.debug(
-                    "No current scene stored, performing fallback procedure", stored_scene_id=self.stored_scene
-                )
-                if self.fallback_run_job_tag:
-                    await self.run_nearest_scheduled_job(context=context, tag=self.fallback_run_job_tag)
+                if self.fallback_nearest_scheduler_job_tag:
+                    logger.debug(
+                        "No current scene stored, performing fallback procedure",
+                        fallback_nearest_scheduler_job_tag=self.fallback_nearest_scheduler_job_tag,
+                    )
+                    await self.run_nearest_scheduled_job(context=context, tag=self.fallback_nearest_scheduler_job_tag)
                 scene = await context.scenes.get(self.stored_scene)
             if not scene:
                 logger.error("Can't toggle scene, because it was not set yet")
@@ -237,7 +256,7 @@ class PlanActionToggleStoredScene(PlanAction):
             group = await context.hue_client_v1.get_group(scene.group)
             logger.debug("Current group state", group_id=group.id, group_state=group.state)
 
-            # TODO: use models, not dict
+            # TODO: Better typing - use models, not dict
             if group.state.all_on:
                 action = {"on": False}
                 logger.info("Turning light off", group=scene.group)
@@ -251,5 +270,4 @@ class PlanActionToggleStoredScene(PlanAction):
                 action = {"on": True, "scene": scene.id}
             result = await context.hue_client_v1.send_group_action(scene.group, action)
             logger.debug("Scene toggled", result=result)
-
         return toggle_current_scene

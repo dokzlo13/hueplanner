@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import time, timedelta
 from typing import Protocol
 
 import structlog
+from pydantic import BaseModel
 
 from ..hue.v2.models import HueEvent
 from .actions import EvaluatedAction
 from .context import Context
+from .serializable import Serializable
 
 logger = structlog.getLogger(__name__)
 
@@ -16,18 +20,23 @@ logger = structlog.getLogger(__name__)
 
 
 class PlanTrigger(Protocol):
-    async def apply_trigger(self, context: Context, action: EvaluatedAction):
-        pass
+
+    async def apply_trigger(self, context: Context, action: EvaluatedAction): ...
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
 @dataclass
-class PlanTriggerOnce(PlanTrigger):
+class PlanTriggerOnce(PlanTrigger, Serializable):
     act_on: str
     alias: str | None = None
     scheduler_tag: str | None = None
+
+    class _Model(BaseModel):
+        act_on: str
+        alias: str | None = None
+        scheduler_tag: str | None = None
 
     async def apply_trigger(self, context: Context, action: EvaluatedAction):
         logger.debug("Applying once trigger", act_on=str(self.act_on))
@@ -42,10 +51,15 @@ class PlanTriggerOnce(PlanTrigger):
 
 
 @dataclass
-class PlanTriggerPeriodic(PlanTrigger):
+class PlanTriggerPeriodic(PlanTrigger, Serializable):
     interval: timedelta
     first_run_time: time | None = None
     alias: str | None = None
+
+    class _Model(BaseModel):
+        interval: timedelta
+        first_run_time: time | None = None
+        alias: str | None = None
 
     async def apply_trigger(self, context: Context, action: EvaluatedAction):
         logger.debug("Applying periodic trigger", interval=str(self.interval), first_run_time=str(self.first_run_time))
@@ -55,7 +69,10 @@ class PlanTriggerPeriodic(PlanTrigger):
 
 
 @dataclass
-class PlanTriggerImmediately(PlanTrigger):
+class PlanTriggerImmediately(PlanTrigger, Serializable):
+    class _Model(BaseModel):
+        pass
+
     async def apply_trigger(self, context: Context, action: EvaluatedAction):
         logger.info(f"Executing action immediately: {action}")
         await action()
@@ -70,8 +87,7 @@ class PlanTriggerOnHueEvent(PlanTrigger, Protocol):
         self._action = action
         context.add_task_to_pool(listen_task)
 
-    async def _handle_event(self, hevent: HueEvent):
-        ...
+    async def _handle_event(self, hevent: HueEvent): ...
 
     async def _listener(self, context: Context):
         retry_counter = 0  # Initialize the retry counter
@@ -112,9 +128,13 @@ class PlanTriggerOnHueEvent(PlanTrigger, Protocol):
 
 
 @dataclass
-class PlanTriggerOnHueButtonEvent(PlanTriggerOnHueEvent):
+class PlanTriggerOnHueButtonEvent(PlanTriggerOnHueEvent, Serializable):
     resource_id: str = ""
     action: str = ""
+
+    class _Model(BaseModel):
+        resource_id: str
+        action: str
 
     def __post_init__(self):
         if self.resource_id == "" or self.action == "":

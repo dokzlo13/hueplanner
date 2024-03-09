@@ -2,68 +2,15 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
-import zoneinfo
-from astral.location import Location
+
+from zoneinfo import ZoneInfo
+
 from hueplanner.storage.interface import IKeyValueCollection
 
 
-# class TimeParser:
-#     @classmethod
-#     def from_location(cls, location: Location, now: datetime | None = None) -> TimeParser:
-#         variables = {}
-#         if now is None:
-#             now = datetime.now(tz=zoneinfo.ZoneInfo(location.timezone))
-#         dt: datetime
-#         for tag, dt in location.sun(date=now).items():
-#             variables[tag] = dt
-#         variables["midnight"] = location.midnight(date=now) + timedelta(days=1)
-#         return TimeParser(variables)
-
-#     def __init__(self, variables):
-#         self.variables = variables
-
-#     def parse(self, input_time):
-#         # Match @variable pattern
-#         variable_match = re.match(r"@(\w+)", input_time)
-#         if variable_match:
-#             var_name = variable_match.group(1)
-#             if var_name in self.variables:
-#                 base_time = self.variables[var_name]
-#                 # Check for modifier after @variable
-#                 modifier_match = re.search(r"([-+])\s*(\d+H)?(\d+M)?", input_time, re.IGNORECASE)
-#                 if modifier_match:
-#                     return self.apply_modifier(base_time, modifier_match)
-#                 return base_time
-#             else:
-#                 raise ValueError(f"Variable @{var_name} is not defined.")
-
-#         # Match XX:XX pattern for exact time
-#         time_match = re.match(r"(\d{1,2}):(\d{2})", input_time)
-#         if time_match:
-#             hours, minutes = time_match.groups()
-#             base_time = datetime.now().replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
-
-#             # Check for time modifiers (+/- HH:MM or HHhMMm...)
-#             modifier_match = re.search(r"([-+])\s*(\d+H)?(\d+M)?", input_time, re.IGNORECASE)
-#             if modifier_match:
-#                 return self.apply_modifier(base_time, modifier_match)
-
-#             return base_time
-
-#         raise ValueError(f"Input time {input_time} is not recognized.")
-
-#     def apply_modifier(self, base_time, modifier_match):
-#         """Applies time modifier to base_time."""
-#         sign, hour_mod, minute_mod = modifier_match.groups()
-#         hours_delta = int(hour_mod[:-1]) if hour_mod else 0
-#         minutes_delta = int(minute_mod[:-1]) if minute_mod else 0
-#         if sign == "-":
-#             hours_delta *= -1
-#             minutes_delta *= -1
-#         return base_time + timedelta(hours=hours_delta, minutes=minutes_delta)
-
 class TimeParser:
-    def __init__(self, storage: IKeyValueCollection):
+    def __init__(self, tz: ZoneInfo, storage: IKeyValueCollection):
+        self.tz = tz
         self.storage = storage
 
     async def parse(self, input_time):
@@ -71,7 +18,10 @@ class TimeParser:
         variable_match = re.match(r"@(\w+)", input_time)
         if variable_match:
             var_name = variable_match.group(1)
-            base_time = await self.storage.get(var_name)
+            if var_name == "now":  # hack to allow "@now" time
+                base_time = datetime.now(tz=self.tz)
+            else:
+                base_time = await self.storage.get(var_name)
             if base_time:
                 # Check for modifier after @variable
                 modifier_match = re.search(r"([-+])\s*(\d+H)?(\d+M)?", input_time, re.IGNORECASE)
@@ -79,7 +29,7 @@ class TimeParser:
                     return self.apply_modifier(base_time, modifier_match)
                 return base_time
             else:
-                raise ValueError(f"Variable @{var_name} is not defined.")
+                raise ValueError(f"Time variable '@{var_name}' is not defined.")
 
         # Match XX:XX pattern for exact time
         time_match = re.match(r"(\d{1,2}):(\d{2})", input_time)

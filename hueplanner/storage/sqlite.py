@@ -58,6 +58,9 @@ class SqliteKeyValueStorage(IKeyValueStorage):
             raise Exception("Database connection is not open. Please call open() before any operations.")
         return self._db
 
+    def get_db_connection(self) -> aiosqlite.Connection:
+        return self.db  # Use the property to leverage the built-in error handling
+
     async def create_collection(self, name: str) -> "SqliteKeyValueCollection":
         table_name = _table_name(name)
         await self.db.execute(
@@ -74,7 +77,7 @@ class SqliteKeyValueStorage(IKeyValueStorage):
         columns = await cursor.fetchall()
         expected_columns = [("hash", "TEXT"), ("key", "BLOB"), ("value", "BLOB")]
         if not all(col[1] == exp[0] and col[2].startswith(exp[1]) for col, exp in zip(columns, expected_columns)):
-            raise Exception(f"Table {name} exists but has an incorrect schema.")
+            raise Exception(f"Table {table_name!r} exists but has an incorrect schema.")
         await self.db.commit()
         return SqliteKeyValueCollection(self.get_db_connection, name)
 
@@ -86,9 +89,6 @@ class SqliteKeyValueStorage(IKeyValueStorage):
             return True
         except Exception:
             return False
-
-    def get_db_connection(self) -> aiosqlite.Connection:
-        return self.db  # Use the property to leverage the built-in error handling
 
 
 class SqliteKeyValueCollection(IKeyValueCollection[K, V], Generic[K, V]):
@@ -152,6 +152,13 @@ class SqliteKeyValueCollection(IKeyValueCollection[K, V], Generic[K, V]):
                 items_list.append((key, value))
         return tuple(items_list)
 
+    async def size(self) -> int:
+        async with self.db.execute(f"SELECT COUNT(key) FROM {self._table_name}") as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                raise ValueError("Failed to count entires")
+            return row[0]
+
     def _compute_hash(self, key: K) -> str:
         key_blob = self._serialize_data(key)
         return hashlib.sha256(key_blob).hexdigest()
@@ -163,14 +170,11 @@ class SqliteKeyValueCollection(IKeyValueCollection[K, V], Generic[K, V]):
         return pickle.loads(data)
 
 
-# from datetime import datetime
-
-
 async def main():
-    async with KeyValueStorage("./db.sqlite") as storage:
+    async with SqliteKeyValueStorage("./db.sqlite") as storage:
         my_data = await storage.create_collection("somedata")
-        # await my_data.set((1, 2, 3), "thisismydata")
-        # await my_data.set('Key', {"hello": "world"})
+        await my_data.set((1, 2, 3), "thisismydata")
+        await my_data.set("Key", {"hello": "world"})
         print(list(await my_data.items()))
         await storage.delete_collection("somedata")
 

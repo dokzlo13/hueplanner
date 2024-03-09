@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import os
 import signal
 import sys
 from contextlib import suppress
@@ -7,25 +9,21 @@ import structlog
 import uvloop
 from zoneinfo import ZoneInfo
 
-from hueplanner import settings
+from hueplanner.dsl import load_plan
 from hueplanner.geo import astronomical_variables_from_location, get_location
 from hueplanner.hue import HueBridgeFactory
 from hueplanner.logging_conf import configure_logging
 from hueplanner.planner import (
     Context,
     PlanActionCallback,
-    PlanActionSequence,
-    PlanActionStoreSceneByName,
-    PlanActionToggleStoredScene,
     PlanEntry,
     Planner,
-    PlanTriggerImmediately,
     PlanTriggerOnce,
-    PlanTriggerOnHueButtonEvent,
 )
 from hueplanner.scheduler import Scheduler
-from hueplanner.storage.sqlite import SqliteKeyValueStorage
+from hueplanner.settings import load_settings
 from hueplanner.storage.memory import InMemoryKeyValueStorage
+from hueplanner.storage.sqlite import SqliteKeyValueStorage
 from hueplanner.time_parser import TimeParser
 
 logger = structlog.getLogger(__name__)
@@ -42,8 +40,21 @@ async def graceful_shutdown(loop, signal=None):
     loop.stop()
 
 
+def _environ_or_required(key):
+    return {"default": os.environ.get(key)} if os.environ.get(key) else {"required": True}
+
+
 async def main(loop):
-    configure_logging(settings.LOG_LEVEL, console_colors=settings.LOG_COLORS)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", **_environ_or_required("CONFIG_FILE"))  # type: ignore
+    args = parser.parse_args()
+    # restore = args.restore
+    config_file = args.config
+
+    settings = load_settings(config_file)
+    configure_logging(settings.log.level, console_colors=settings.log.colors)
+
+    plan = load_plan(config_file)
 
     # Global stop event to stop 'em all!
     stop_event = asyncio.Event()
@@ -63,7 +74,7 @@ async def main(loop):
     for sig in STOP_SIGNALS:
         loop.add_signal_handler(sig, stop_all)
 
-    bridge_factory = HueBridgeFactory(address=settings.HUE_BRIDGE_ADDR, access_token=settings.HUE_BRIDGE_USERNAME)
+    bridge_factory = HueBridgeFactory(address=settings.hue_bridge.addr, access_token=settings.hue_bridge.username)
     bridge_v1 = bridge_factory.api_v1()
     bridge_v2 = bridge_factory.api_v2()
 
@@ -93,103 +104,103 @@ async def main(loop):
                 await task
             except asyncio.CancelledError:
                 logger.warning(f"Task {task.get_name()!r} terminated")
-                
-    if settings.DATABASE_PATH:
-        logger.warning("Using sqlite engine to store data", db_path=settings.DATABASE_PATH)
+
+    if settings.database.path:
+        logger.warning("Using sqlite engine to store data", db_path=settings.database.path)
         storage_cls = SqliteKeyValueStorage
+        db_path = settings.database.path
     else:
         logger.warning("Using in-memory engine to store data")
         storage_cls = InMemoryKeyValueStorage
+        db_path = ""
 
-    async with storage_cls(settings.DATABASE_PATH) as storage, bridge_v1, bridge_v2:
+    async with storage_cls(db_path) as storage, bridge_v1, bridge_v2:
         geocache = await storage.create_collection("geocache")
         time_variables = await storage.create_collection("time_variables")
         scenes_collection = await storage.create_collection("scenes")
         await scenes_collection.delete_all()
-        
-        location = await geocache.get("location_info")
-        if location is None:
-            logger.warning("No geo location data storing, obtaining geocoded location...")
-            location = get_location(settings.GEO_LOCATION_NAME)
-            await geocache.set("location_info", location)
-        else:
-            logger.info("Geocoded location available from cache", location=location)
+        logger.debug("scenes_collection cache flushed")
 
-        tz = ZoneInfo(location.timezone)
+        location = None
+        if settings.geo.location_name:
+            location = await geocache.get("location_info")
+            if location is None:
+                logger.warning("No geo location data storing, obtaining geocoded location...")
+                location = get_location(settings.geo.location_name)
+                logger.info("Geocoded location obtained form geocoder", location=location)
+                await geocache.set("location_info", location)
+            else:
+                logger.info("Geocoded location available from cache", location=location)
+        else:
+            logger.warning("No geo_location_info provided, time variables will be unavailable.")
+            if (await time_variables.size()) > 0:
+                await time_variables.delete_all()
+                logger.warning("time_variables cache flushed")
+
+        # Setting timezone
+        tz = None
+        if location is not None:
+            loc_tz = ZoneInfo(location.timezone)
+            if settings.tz:
+                logger.warning(
+                    "Settings provides different timezone, then location. Settings value will be used.",
+                    location=loc_tz,
+                    settings=settings.tz,
+                )
+                tz = settings.tz
+            else:
+                logger.warning("Using timezone from location", tz=tz)
+                tz = loc_tz
+
+        if tz is None and settings.tz:
+            tz = settings.tz
+            logger.warning("Using timezone from 'tz' setting", tz=tz)
+
+        if tz is None:
+            from tzlocal import get_localzone
+
+            tz = get_localzone()
+            logger.warning("Timezone not provided, using local timezone", tz=tz)
+
         # Running scheduler
         scheduler = Scheduler(tz=tz)
-        logger.info("Using timezone", tz=repr(scheduler.tz))
         tasks.add(asyncio.create_task(scheduler.run(stop_event), name="scheduler_task"))
 
-
+        # Creating context
         context = Context(
             stop_event=stop_event,
             hue_client_v1=bridge_v1,
             hue_client_v2=bridge_v2,
             scheduler=scheduler,
             scenes=scenes_collection,
-            time_parser=TimeParser(time_variables),
+            time_parser=TimeParser(tz, time_variables),
         )
 
-        # TODO: Plan parser
-        def multi_group_same_scene(name: str, groups: list[int]):
-            return PlanActionSequence(
-                *[PlanActionStoreSceneByName(store_as=f"#scene:group-{gr}", name=name, group=gr) for gr in groups]
-            )
-        async def evaluate_plan():
-            for k, v in astronomical_variables_from_location(location).items():
-                logger.info(f"Astronomical events for today: {k:<10}: {str(v)}")
-                await time_variables.set(k, v)
+        async def evaluate_plan(plan):
+            if location is not None:
+                for k, v in astronomical_variables_from_location(location).items():
+                    logger.info(f"Astronomical event for today: {k:<10}: {str(v)}")
+                    await time_variables.set(k, v)
 
-            plan = [
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on="@dawn", scheduler_tag="scene"),
-                    action=multi_group_same_scene("Energize", [2, 81]),
-                ),
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on="@noon", scheduler_tag="scene"),
-                    action=multi_group_same_scene("Concentrate", [2, 81]),
-                ),
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on="@sunset - 1H", scheduler_tag="scene"),
-                    action=multi_group_same_scene("Read", [2, 81]),
-                ),
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on="@dusk", scheduler_tag="scene"),
-                    action=multi_group_same_scene("Relax", [2, 81]),
-                ),
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on="@midnight - 30M", alias="@midnight - 30M", scheduler_tag="scene"),
-                    action=multi_group_same_scene("Rest", [2, 81]),
-                ),
-                # Button toggle lights
-                PlanEntry(
-                    trigger=PlanTriggerOnHueButtonEvent(
-                        action="initial_press", resource_id="1e53050b-ca07-44f3-977f-ab0477e5e911"
-                    ),
-                    action=PlanActionToggleStoredScene(stored_scene="#scene:group-2", fallback_run_job_tag="scene"),
-                ),
-                PlanEntry(
-                    trigger=PlanTriggerOnHueButtonEvent(
-                        action="initial_press", resource_id="f0994222-7f20-42e4-95d1-a548a7930ff1"
-                    ),
-                    action=PlanActionToggleStoredScene(stored_scene="#scene:group-81", fallback_run_job_tag="scene"),
-                ),
-                # Re-evaluate plan on midnight
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on="@midnight + 1H", alias="Evaluate plan"),
-                    action=PlanActionCallback(evaluate_plan),
-                ),
-            ]
             await context.reset()
             await Planner(context).apply_plan(plan)
-            logger.info("New schedule")
-            print(scheduler)
+            logger.info("Plan evaluated. Schedule:")
+            print(scheduler, flush=True)
 
-        await evaluate_plan()
+        if settings.continuity.re_evaluate_plan:
+            logger.warning(
+                "Applying continuity modifier to the plan", re_evaluate_plan=settings.continuity.re_evaluate_plan
+            )
+            plan.append(
+                PlanEntry(
+                    trigger=PlanTriggerOnce(act_on=settings.continuity.re_evaluate_plan, alias="Evaluate plan"),
+                    action=PlanActionCallback(evaluate_plan, plan),
+                ),
+            )
+        await evaluate_plan(plan)
 
-        if settings.PRINT_SCHEDULE_INTERVAL > 0:
-            logger.info("Starting periodic schedule printing")
+        if settings.log.print_schedule_interval > 0:
+            logger.info("Starting periodic schedule printing", interval=f"{settings.log.print_schedule_interval}s")
 
             async def periodic_print_schedule(stop_event, sleep):
                 while not stop_event.is_set():
@@ -201,7 +212,7 @@ async def main(loop):
 
             tasks.add(
                 asyncio.create_task(
-                    periodic_print_schedule(stop_event, settings.PRINT_SCHEDULE_INTERVAL),
+                    periodic_print_schedule(stop_event, settings.log.print_schedule_interval),
                     name="schedule_periodic_print",
                 )
             )
@@ -210,9 +221,6 @@ async def main(loop):
         logger.info("Tasks started, waiting for termination signal.")
         await wait_tasks_shutdown()
         await context.shutdown()
-        await bridge_v2.close()
-        await bridge_v1.close()
-        await storage.close()
 
 
 if __name__ == "__main__":

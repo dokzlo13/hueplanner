@@ -20,8 +20,8 @@ class InMemoryKeyValueStorage(IKeyValueStorage):
 
     async def create_collection(self, name: str) -> "InMemoryKeyValueCollection":
         if name in self.collections:
-            raise Exception(f"Collection {name} already exists.")
-        self.collections[name] = InMemoryKeyValueCollection()
+            return self.collections[name]
+        self.collections[name] = InMemoryKeyValueCollection(name)
         return self.collections[name]
 
     async def delete_collection(self, name: str) -> bool:
@@ -40,8 +40,13 @@ class InMemoryKeyValueStorage(IKeyValueStorage):
 
 
 class InMemoryKeyValueCollection(IKeyValueCollection[K, V], Generic[K, V]):
-    def __init__(self):
+    def __init__(self, name: str):
+        self._name = name
         self.store: Dict[K, V] = {}
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     async def contains(self, key: K) -> bool:
         return key in self.store
@@ -65,3 +70,5 @@ class InMemoryKeyValueCollection(IKeyValueCollection[K, V], Generic[K, V]):
     async def delete_all(self) -> None:
         self.store.clear()
 
+    async def size(self) -> int:
+        return len(self.store)
