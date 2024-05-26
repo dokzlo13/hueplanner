@@ -149,8 +149,8 @@ async def main(loop):
                 )
                 tz = settings.tz
             else:
-                logger.warning("Using timezone from location", tz=tz)
                 tz = loc_tz
+                logger.warning("Using timezone from location", tz=tz)
 
         if tz is None and settings.tz:
             tz = settings.tz

@@ -138,10 +138,11 @@ class PlanActionCallback(PlanAction):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
-@dataclass
+@dataclass(kw_only=True)
 class PlanActionStoreScene(PlanAction, Protocol):
     store_as: str
-
+    activate: bool = True
+ 
     async def define_action(self, context: Context) -> EvaluatedAction:
         required_scene = None
         for scene in await context.hue_client_v1.get_scenes():
@@ -156,19 +157,20 @@ class PlanActionStoreScene(PlanAction, Protocol):
             await context.scenes.set(self.store_as, required_scene)
             log = logger.bind(scene_id=required_scene.id, scene_name=required_scene.name)
             log.debug("Context current scene set to", scene=required_scene)
-            group = await context.hue_client_v1.get_group(scene.group)
-            if not group.state.any_on:
-                log.info("Scene not set, because group is not enabled", group_id=group.id, group_state=group.state)
-                return
-            res = await context.hue_client_v1.activate_scene(required_scene.group, required_scene.id)
-            log.info("Scene set", res=res)
+            if self.activate:
+                group = await context.hue_client_v1.get_group(scene.group)
+                if not group.state.any_on:
+                    log.info("Scene not activated, because group is not active", group_id=group.id, group_state=group.state)
+                    return
+                res = await context.hue_client_v1.activate_scene(required_scene.group, required_scene.id)
+                log.info("Scene activated", res=res)
 
         return set_scene
 
     def match_scene(self, scene: Scene) -> bool: ...
 
 
-@dataclass
+@dataclass(kw_only=True)
 class PlanActionStoreSceneByName(PlanActionStoreScene, Serializable):
     name: str
     group: int | None = None
@@ -187,7 +189,7 @@ class PlanActionStoreSceneByName(PlanActionStoreScene, Serializable):
         return False
 
 
-@dataclass
+@dataclass(kw_only=True)
 class PlanActionStoreSceneById(PlanActionStoreScene, Serializable):
     id: str
 
@@ -270,4 +272,5 @@ class PlanActionToggleStoredScene(PlanAction, Serializable):
                 action = {"on": True, "scene": scene.id}
             result = await context.hue_client_v1.send_group_action(scene.group, action)
             logger.debug("Scene toggled", result=result)
+
         return toggle_current_scene
