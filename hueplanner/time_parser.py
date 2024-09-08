@@ -46,7 +46,8 @@ class TimeParser:
 
         raise ValueError(f"Input time {input_time} is not recognized.")
 
-    def apply_modifier(self, base_time, modifier_match):
+    @staticmethod
+    def apply_modifier(base_time, modifier_match):
         """Applies time modifier to base_time."""
         sign, hour_mod, minute_mod = modifier_match.groups()
         hours_delta = int(hour_mod[:-1]) if hour_mod else 0

@@ -112,7 +112,7 @@ class Job:
     def __repr__(self) -> str:
         fields = self._str()
         return (
-            f"<Job type:{fields[0]} name:{fields[1]!r} due_at:{fields[2]!r} tz:{fields[3]!r} "
+            f"<Job  tz:{fields[0]!r} type:{fields[1]} name:{fields[2]!r} due_at:{fields[3]!r} "
             f"due_in:{fields[4]!r} attempts:{fields[5]!r}>"
         )
 
@@ -138,7 +138,7 @@ class Job:
             f"{self.success_count}/{self.max_runs if self.max_runs is not None else 'inf'}", _width[5]
         )  # Modify as per your job retry logic if any
 
-        return [job_type, function_name, due_at, tzinfo, due_in, attempts]
+        return [tzinfo, job_type, function_name, due_at, due_in, attempts]
 
 
 class Scheduler:
@@ -176,8 +176,8 @@ class Scheduler:
         scheduler_headings = "Scheduler Jobs\n\n"
         # Define column alignments, widths, and names
         c_align = ("<", "<", "<", "<", ">", ">")
-        c_width = (8, 20, 19, 16, 25, 10)
-        c_name = ("Type", "Func/Alias", "Due At", "TZ Info", "Due In", "Attempts")
+        c_width = (16, 8, 20, 19, 25, 10)
+        c_name = ("TZ Info", "Type", "Func/Alias", "Due At", "Due In", "Attempts")
 
         # Create format string for each column
         form = [f"{{{idx}:{align}{width}}}" for idx, (align, width) in enumerate(zip(c_align, c_width))]

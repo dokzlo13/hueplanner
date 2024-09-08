@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
+from hueplanner.ioc import IOC
+
 from .actions import PlanAction
-from .context import Context
 from .triggers import PlanTrigger
 
 
@@ -10,15 +11,18 @@ class PlanEntry:
     trigger: PlanTrigger
     action: PlanAction
 
-    async def apply(self, context: Context):
-        action = await self.action.define_action(context)
-        await self.trigger.apply_trigger(context, action)
+    async def apply(self, ioc: IOC):
+        action = await ioc.make(self.action.define_action)
+        await ioc.make(self.trigger.apply_trigger, action)
+
+
+Plan = list[PlanEntry]
 
 
 class Planner:
-    def __init__(self, context: Context) -> None:
-        self.context = context
+    def __init__(self, ioc: IOC) -> None:
+        self.ioc = ioc
 
-    async def apply_plan(self, plan: list[PlanEntry]):
+    async def apply_plan(self, plan: Plan):
         for plan_entry in plan:
-            await plan_entry.apply(self.context)
+            await plan_entry.apply(self.ioc)

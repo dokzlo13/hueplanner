@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Type
 
 import yaml
+from hueplanner.planner.serializable import Serializable
 
 from .planner import (
     ACTION_CLASSES,
@@ -29,19 +30,19 @@ trigger_map = generate_mappings(TRIGGER_CLASSES, "PlanTrigger")
 
 
 def _load_action(action_data: dict[str, Any]) -> PlanAction:
-    type, args = action_data["type"], action_data["args"]
-    action_class = action_map[type]
+    type, args = action_data["type"], action_data.get("args", {})
+    action_class: Type[Serializable] = action_map[type]
     if action_class is PlanActionSequence:
         action = _load_sequence(args)
     else:
         action = action_class.loads(args)
-    return action
+    return action  # type: ignore
 
 
 def _load_trigger(trigger_data: dict[str, Any]) -> PlanTrigger:
-    type, args = trigger_data["type"], trigger_data["args"]
-    trigger_class = trigger_map[type]
-    return trigger_class.loads(args)
+    type, args = trigger_data["type"], trigger_data.get("args", {})
+    trigger_class: Type[Serializable] = trigger_map[type]
+    return trigger_class.loads(args)  # type: ignore
 
 
 def _load_sequence(entries: list[dict[str, Any]]) -> PlanActionSequence:

@@ -4,8 +4,8 @@ from pydantic import BaseModel
 
 
 class Serializable(Protocol):
-    @property
-    def _Model(self) -> BaseModel: ...
+    class _Model(BaseModel):
+        pass
 
     @classmethod
     def loads(cls, data: dict[str, Any]):

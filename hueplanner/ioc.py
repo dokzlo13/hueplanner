@@ -1,0 +1,573 @@
+# from __future__ import annotations
+
+import inspect
+from abc import abstractmethod
+from collections import OrderedDict
+from dataclasses import dataclass
+from functools import partial, wraps
+from inspect import get_annotations, isclass, isfunction
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Protocol,
+    Tuple,
+    Type,
+    Union,
+    get_type_hints,
+    runtime_checkable,
+)
+
+import structlog
+
+logger = structlog.getLogger(__name__)
+
+
+@dataclass(kw_only=True)
+class _Signature:
+    sig: inspect.Signature
+    hints: dict[str, Any]
+    target: Any
+
+
+Constructable = Union[Callable[..., Any], Type[Any]]
+
+
+class IocError(Exception):
+    pass
+
+
+class IocResolutionFailed(IocError):
+    pass
+
+
+@runtime_checkable
+class Provider(Protocol):
+    @abstractmethod
+    def construct(self, resolution_context: "ResolutionContext") -> Any:
+        pass
+
+
+class Singleton(Provider):
+    def __init__(self, instance: Any) -> None:
+        if is_function_or_class(instance):
+            raise IocError("Singleton entry should be initialized object, not function/class")
+        self.instance = instance
+
+    def construct(self, resolution_context: "ResolutionContext") -> Any:
+        return self.instance
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({repr(self.instance)})"
+
+
+class Factory(Provider):
+    def __init__(self, factory: Callable[..., Any], allow_inject: bool = True) -> None:
+        self.factory = factory
+        self.allow_inject = allow_inject
+        if not is_function_or_class(factory):
+            raise IocError(f"Factory entry should be function or class, not {type(factory)}")
+
+        if not self.allow_inject and has_required_args(self.factory):
+            raise IocError("Factory function should be injectable or not have required parameters")
+
+    def construct(self, resolution_context: "ResolutionContext") -> Any:
+        if self.allow_inject:
+            return resolution_context.resolve(self.factory)
+        return self.factory()
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({repr(self.factory)})"
+
+
+class SingletonFactory(Provider):
+    _sentinel = object()
+
+    def __init__(self, factory: Factory) -> None:
+        self.factory = factory
+        self._evaluated = self._sentinel
+
+    def construct(self, resolution_context: "ResolutionContext") -> Any:
+        if self._evaluated is not self._sentinel:
+            logger.debug("Singleton reused", instance=self._evaluated)
+            return self._evaluated
+        self._evaluated = self.factory.construct(resolution_context)
+        logger.debug("Instance assembled with factory", instance=self._evaluated)
+        return self._evaluated
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({repr(self.factory)})"
+
+
+class ResolutionContext:
+    def __init__(self, ioc_container: "IOC", *, bypass_cache: bool = False) -> None:
+        self.ioc_container = ioc_container
+        self.bypass_cache = bypass_cache
+        self._currently_resolving: set = set()
+        self._resolution_cache: dict[Any, Any] = {}
+
+    def resolve(self, target: Constructable) -> Any:
+        if target in self._currently_resolving:
+            raise RuntimeError(f"Detected recursive dependency resolution for {target}")
+
+        if not self.bypass_cache and target in self._resolution_cache:
+            return self._resolution_cache[target]
+
+        self._currently_resolving.add(target)
+        try:
+            resolved = self.ioc_container._make(target, self)
+            if not self.bypass_cache:
+                self._resolution_cache[target] = resolved
+            return resolved
+        finally:
+            self._currently_resolving.remove(target)
+
+
+def is_function_or_class(variable):
+    # Check if it's a function
+    if isfunction(variable):
+        return TabError  # It's a function
+    # Check if it's a class
+    if isclass(variable):
+        return True  # It's a class
+    return False  # It's neither a function nor a class
+
+
+def has_required_args(factory: Constructable) -> bool:
+    # Get the correct callable to inspect: if it's a class, inspect its __init__ method
+    if inspect.isclass(factory):
+        signature = inspect.signature(factory.__init__)
+    else:
+        signature = inspect.signature(factory)
+
+    # Loop through the parameters in the signature
+    for param in signature.parameters.values():
+        # Skip 'self' and 'cls' for methods, since they are not considered arguments
+        if param.name in ("self", "cls"):
+            continue
+
+        # Check if the parameter has no default value
+        if param.default == inspect.Parameter.empty:
+            return True
+
+    # If no non-defaulted parameter is found, return False
+    return False
+
+
+def normalize_args(
+    sig: inspect.Signature,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    override_args: tuple[Any, ...] | None = None,
+    override_kwargs: dict[str, Any] | None = None,
+):
+    if override_args is None:
+        override_args = tuple()
+    if override_kwargs is None:
+        override_kwargs = {}
+
+    # Extract the function parameters from the signature
+    params = sig.parameters
+
+    # Index for positional args
+    arg_idx = 0
+    override_idx = 0
+
+    # Prepare the final list of args and kwargs to pass
+    final_args = []
+    final_kwargs = {}
+
+    # print(args, kwargs)
+    # print(override_args, override_kwargs)
+
+    # Iterate over the parameters in the function signature
+    for param_name, param in params.items():
+        # Handle positional and positional-or-keyword arguments
+        if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
+            # Try to take from override_args first
+            if override_idx < len(override_args):
+                final_args.append(override_args[override_idx])
+                override_idx += 1
+            # If override_args is exhausted, take from args
+            elif arg_idx < len(args):
+                final_args.append(args[arg_idx])
+                arg_idx += 1
+            # Otherwise, use default values
+            elif param.default != inspect.Parameter.empty:
+                final_args.append(param.default)
+            else:
+                raise TypeError(f"Missing required positional argument: '{param_name}'")
+
+        # Handle keyword-only arguments
+        elif param.kind == param.KEYWORD_ONLY:
+            # Check if the argument is provided in override_kwargs
+            if param_name in override_kwargs:
+                final_kwargs[param_name] = override_kwargs[param_name]
+            # Otherwise, check if it's in the original kwargs
+            elif param_name in kwargs:
+                final_kwargs[param_name] = kwargs[param_name]
+            # If there's a default value, use it
+            elif param.default != inspect.Parameter.empty:
+                final_kwargs[param_name] = param.default
+            else:
+                raise TypeError(f"Missing required keyword-only argument: '{param_name}'")
+
+    # Bind the arguments using the final list of args and kwargs
+    bound_args = sig.bind(*final_args, **final_kwargs)
+    bound_args.apply_defaults()  # Apply defaults for any missing arguments
+    # print(bound_args.args, bound_args.kwargs)
+    return bound_args.args, bound_args.kwargs
+
+
+class IOC:
+    def __init__(self) -> None:
+        self._registry: Dict[Type[Any], Provider] = {}
+
+    def declare(self, dependency: Type[Any], declaration: Union[Provider, Callable[..., Any], object]) -> None:
+        if isinstance(declaration, Provider):
+            self._registry[dependency] = declaration
+
+        elif isfunction(declaration) or isclass(declaration):
+            self._registry[dependency] = Factory(declaration)
+
+        elif isinstance(declaration, object):
+            self._registry[dependency] = Singleton(declaration)
+        else:
+            raise TypeError("Declaration must be a Provider, callable, instance of class or class.")
+
+    def auto_declare(self, obj: Callable[..., Any] | object) -> None:
+        if isclass(obj):
+            self._registry[obj] = Factory(obj)
+            return
+
+        if isfunction(obj):
+            obj = Factory(obj)
+
+        if isinstance(obj, Singleton):
+            self._registry[type(obj.instance)] = obj
+            return
+
+        if isinstance(obj, (Factory, SingletonFactory)):
+            rtype = get_type_hints(obj.factory).get("return")
+            if rtype:
+                self._registry[rtype] = obj
+            else:
+                raise IocError("Callable must have a return type hint to be auto-declared.")
+            return
+
+        if isinstance(obj, object):
+            self._registry[type(obj)] = Singleton(obj)
+            return
+
+        raise IocError("Auto-declared entry must be a callable, instance of class or class.")
+
+    def resolve(self, typ: Type[Any]):
+        return self._resolve_dependency(typ, ResolutionContext(self))
+
+    def make(self, target: Constructable, *args, **kwargs) -> Any:
+        return self._make(target, ResolutionContext(self), args, kwargs)
+
+    def _make(
+        self,
+        target: Constructable,
+        resolution_context: ResolutionContext,
+        extra_args: tuple[Any] | None = None,
+        extra_kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        if isclass(target):
+            hints = get_type_hints(target.__init__, localns=locals(), globalns=globals())
+        elif callable(target):
+            hints = get_type_hints(target)
+        else:
+            raise IocError(f"Can't resolve type hints for {target!r} of type {type(target)!r}")
+
+        signature = _Signature(
+            sig=inspect.signature(target),
+            hints=hints,
+            target=target,
+        )
+        logger.debug("Trying inject", signature=signature)
+
+        strict_resolve = True
+        if extra_args or extra_kwargs:
+            strict_resolve = False
+
+        args_resolved, kwargs_resolved = self._resolve_full(
+            signature, resolution_context, strict_resolve=strict_resolve
+        )
+        args, kwargs = normalize_args(
+            signature.sig,
+            args_resolved,
+            kwargs_resolved,
+            extra_args,
+            extra_kwargs,
+        )
+        return target(*args, **kwargs)
+
+    def _resolve_full(
+        self,
+        sign: _Signature,
+        resolution_context: ResolutionContext,
+        *,
+        strict_resolve: bool = True,
+    ) -> Tuple[tuple[Any], dict[str, Any]]:
+        args, kwargs = self._extract_dependencies(sign)
+        args_resolved = OrderedDict()
+        kwargs_resolved = {}
+        for arg_name, arg_type in args.items():
+            try:
+                args_resolved[arg_name] = self._resolve_dependency(arg_type, resolution_context)
+            except IocResolutionFailed as ex:
+                if strict_resolve:
+                    raise IocResolutionFailed(f"Failed to make {sign.target!r}, cannot resolve {arg_name!r}: {str(ex)}")
+
+        for kwarg_name, kwarg_type in kwargs.items():
+            try:
+                kwargs_resolved[kwarg_name] = self._resolve_dependency(kwarg_type, resolution_context)
+            except IocResolutionFailed as ex:
+                if strict_resolve:
+                    raise IocResolutionFailed(f"Failed to make {sign.target!r}, cannot resolve {arg_name}: {str(ex)}")
+
+        return tuple(args_resolved.values()), kwargs_resolved
+
+    def _resolve_dependency(self, typ, context: ResolutionContext) -> Any:
+        if (provider := self._registry.get(typ)) is None:
+            raise IocResolutionFailed(f"no provider for dependency of type {type!r}")
+        return provider.construct(context)
+
+    def _extract_dependencies(self, signature: _Signature):
+        args = OrderedDict()
+        kwargs = {}
+
+        for name, param in signature.sig.parameters.items():
+            if name == "self":
+                continue  # Skip 'self' for class methods
+            param_type = signature.hints.get(name, None)
+            if param.default == inspect.Parameter.empty:
+                args[name] = param_type
+            else:
+                kwargs[name] = param_type
+        return args, kwargs
+
+    # def _make_sign(self, target: Constructable) -> _Signature:
+    #     if isclass(target):
+    #         hints = get_type_hints(target.__init__, localns=locals(), globalns=globals())
+    #     elif callable(target):
+    #         hints = get_type_hints(target)
+    #     else:
+    #         raise IocError(f"Can't resolve type hints for {target!r} of type {type(target)!r}")
+
+    #     return _Signature(
+    #         sig=inspect.signature(target),
+    #         hints=hints,
+    #         target=target,
+    #     )
+
+    # def make_partial(self, target: Constructable) -> Callable[..., Any]:
+    #     args, kwargs = self._resolve_full(
+    #         self._make_sign(target), ResolutionContext(self), strict_resolve=False
+    #     )
+
+    #     # args, kwargs = normalize_args(inspect.signature(target), args, kwargs)
+    #     return partial(target, *args, **kwargs)
+
+    # def inject(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+    #     signature = self._make_sign(fn)
+
+    #     @wraps(fn)
+    #     def wrapper(*extra_args, **extra_kwargs) -> Any:
+    #         args_resolved, kwargs_resolved = self._resolve_full(
+    #             signature, ResolutionContext(self), strict_resolve=False
+    #         )
+    #         args, kwargs = normalize_args(
+    #             signature.sig,
+    #             args_resolved,
+    #             kwargs_resolved,
+    #             extra_args,
+    #             extra_kwargs,
+    #         )
+    #         return fn(*args, **kwargs)
+
+    #     return wrapper
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+import pytest
+
+
+def test_singleton_declaration():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    foo_instance = Foo(1)
+    ioc.declare(Foo, Singleton(foo_instance))  # Declaring as Singleton
+
+    resolved_foo = ioc.resolve(Foo)
+    assert resolved_foo is foo_instance
+    assert ioc.resolve(Foo) is ioc.resolve(Foo)
+    assert resolved_foo.a == 1
+
+
+def test_factory_declaration():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    ioc.declare(Foo, Factory(lambda: Foo(2)))  # Declaring as Factory
+
+    resolved_foo = ioc.resolve(Foo)
+    assert resolved_foo.a == 2
+    assert resolved_foo is not ioc.resolve(Foo)  # Factory should return a new instance
+
+
+def test_factory_with_injection():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    class Bar:
+        def __init__(self, foo: Foo) -> None:
+            self.foo = foo
+
+    ioc.declare(Foo, lambda: Foo(3))  # Declaring Foo as Factory
+    ioc.declare(Bar, Factory(Bar, allow_inject=True))  # Declaring Bar with automatic injection
+
+    class FooBar:
+        def __init__(self, foo: Foo, bar: Bar) -> None:
+            self.foo = foo
+            self.bar = bar
+
+    resolved_foobar = ioc.make(FooBar)
+    assert isinstance(resolved_foobar, FooBar)
+    assert resolved_foobar.foo.a == 3
+    assert resolved_foobar.bar.foo.a == 3
+
+
+def test_error_handling():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    # No declaration for Bar
+    class Bar:
+        def __init__(self, foo: Foo) -> None:
+            self.foo = foo
+
+    with pytest.raises(Exception) as excinfo:
+        ioc.make(Bar)
+    assert "cannot resolve 'foo'" in str(excinfo.value)
+
+
+def test_auto_declare():
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    ioc = IOC()
+    ioc.auto_declare(Foo(4))  # Auto-declare as Singleton
+    resolved_foo = ioc.resolve(Foo)
+    assert resolved_foo.a == 4
+
+    def make_foo() -> Foo:
+        return Foo(5)
+
+    ioc = IOC()
+    ioc.auto_declare(make_foo)  # Auto-declare as function Factory
+    resolved_foo = ioc.resolve(Foo)
+    assert resolved_foo.a == 5
+
+    class Bar:
+        def __init__(self) -> None:
+            self.a = 42
+
+    ioc = IOC()
+    ioc.auto_declare(Bar)  # Auto-declare as class Factory
+    resolved_bar = ioc.resolve(Bar)
+    assert resolved_bar.a == 42
+
+
+# def test_circular_dependency_handling():
+
+
+#     class Foo:
+#         def __init__(self, baz: "Baz") -> None:
+#             self.baz = baz
+
+#     class Bar:
+#         def __init__(self, foo: "Foo") -> None:
+#             self.foo = foo
+
+#     class Baz:
+#         def __init__(self, bar: "Bar") -> None:
+#             self.bar = bar
+
+#     ioc = IOC()
+#     ioc.declare(Foo, Factory(Foo, allow_inject=True))
+#     ioc.declare(Bar, Factory(Bar, allow_inject=True))
+#     ioc.declare(Baz, Factory(Baz, allow_inject=True))
+
+#     ioc.resolve(Baz)
+
+#     # with pytest.raises(Exception) as excinfo:
+#     #     ioc.make(brr)
+#     # assert "recursive" in str(excinfo.value)
+
+
+# def test_injection_decorator():
+#     ioc = IOC()
+
+#     class Foo:
+#         def __init__(self, a: int) -> None:
+#             self.a = a
+
+#     class Bar:
+#         def __init__(self, foo: Foo) -> None:
+#             self.foo = foo
+
+#     def make_bar(foo: Foo) -> Bar:
+#         return Bar(foo)
+
+#     ioc.declare(Foo, lambda: Foo(6))  # Declaring Foo as Factory
+#     ioc.declare(Bar, Factory(make_bar, allow_inject=True))  # Declaring Bar with automatic injection
+
+#     @ioc.inject
+#     def baz(foo: Foo, bar: Bar):
+#         return foo.a, bar.foo.a
+
+#     result = baz()
+#     assert result == (6, 6)
+
+
+# def test_partial_initialization():
+#     ioc = IOC()
+
+#     class Foo:
+#         def __init__(self, a: int) -> None:
+#             self.a = a
+
+#     class Bar:
+#         def __init__(self, foo: Foo) -> None:
+#             self.foo = foo
+
+#     ioc.declare(Foo, Foo(7))  # Declaring Foo as Factory
+#     ioc.declare(Bar, Bar)  # Declaring Bar with automatic injection
+
+#     @ioc.inject
+#     def baz(foo: Foo, bar: Bar, extra: int):
+#         return foo.a + bar.foo.a + extra
+
+#     partial_baz = ioc.make_partial(baz)
+#     print(partial_baz)
+#     return
+#     result = partial_baz(extra=1)
+#     assert result == 15  # 7 (Foo.a) + 7 (Bar.foo.a) + 1 (extra)

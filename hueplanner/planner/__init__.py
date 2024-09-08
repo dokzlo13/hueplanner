@@ -1,15 +1,18 @@
 from .actions import (
     PlanAction,
+    PlanActionCallback,
+    PlanActionFlushDb,
+    PlanActionPopulateGeoVariables,
+    PlanActionPrintSchedule,
+    PlanActionReEvaluatePlan,
+    PlanActionSequence,
     PlanActionStoreSceneById,
     PlanActionStoreSceneByName,
-    PlanActionCallback,
-    PlanActionSequence,
     PlanActionToggleStoredScene,
     PlanActionWithEvaluationCondition,
     PlanActionWithRuntimeCondition,
 )
-from .context import Context
-from .planner import PlanEntry, Planner
+from .planner import PlanEntry, Planner, Plan
 from .triggers import (
     PlanTrigger,
     PlanTriggerImmediately,
@@ -23,6 +26,10 @@ ACTION_CLASSES = [
     PlanActionStoreSceneByName,
     PlanActionSequence,
     PlanActionToggleStoredScene,
+    PlanActionPopulateGeoVariables,
+    PlanActionPrintSchedule,
+    PlanActionFlushDb,
+    PlanActionReEvaluatePlan,
     ## This cannot be parsed from config yet
     # PlanActionCallback,
     # PlanActionWithEvaluationCondition,
