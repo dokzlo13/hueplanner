@@ -1,6 +1,6 @@
 import asyncio
+import bisect
 import datetime
-import heapq
 from contextlib import suppress
 from typing import Any, Callable
 
@@ -120,15 +120,15 @@ class Job:
         """Return a list of string representations of the job's attributes, capped to column widths."""
         _width: tuple[int, ...]
         if c_width is None:
-            _width = (None,) * 6  # type: ignore
+            _width = (None,) * 10  # type: ignore
         else:
             _width = c_width
 
         now = datetime.datetime.now(self.tz)
-        job_type = str_cutoff("Once" if self.interval is None else "Cyclic", _width[0])
-        function_name = str_cutoff(self.alias, _width[1])
-        due_at = str_cutoff(self.next_run.strftime("%Y-%m-%d %H:%M:%S"), _width[2])
-        tzinfo = str_cutoff(str(self.next_run.tzinfo) if self.next_run.tzinfo else "Local", _width[3])
+        tzinfo = str_cutoff(str(self.next_run.tzinfo) if self.next_run.tzinfo else "Local", _width[0])
+        job_type = str_cutoff("Once" if self.interval is None else "Cyclic", _width[1])
+        function_name = str_cutoff(self.alias, _width[2])
+        due_at = str_cutoff(self.next_run.strftime("%Y-%m-%d %H:%M:%S"), _width[3])
         due_in_dt = self.next_run - now
         if due_in_dt < datetime.timedelta(0):
             due_in = str_cutoff("Expired: -" + str(now - self.next_run), _width[4])
@@ -148,7 +148,7 @@ class Scheduler:
         self.job_lookup: dict[str, Job] = {}  # Track jobs by their name
         self.alias_counts: dict[str, int] = {}  # Track counts for alias naming
         self.queue: asyncio.Queue[Job] = asyncio.Queue()  # Create a queue for jobs
-        self.lock = asyncio.Lock()  # Create a lock for heap operations
+        self.lock = asyncio.Lock()  # Create a lock for jobs
         self.worker_count = worker_count
 
     async def _run_job(self, job: Job):
@@ -156,7 +156,7 @@ class Scheduler:
         if job.interval and job.must_run():
             job.next_run = datetime.datetime.now(tz=self.tz) + job.interval
             async with self.lock:  # Acquire lock before modifying the heap
-                heapq.heappush(self.jobs, job)
+                bisect.insort(self.jobs, job)
         else:
             logger.debug("Executing last run for job", alias=job.alias)
 
@@ -176,7 +176,8 @@ class Scheduler:
         scheduler_headings = "Scheduler Jobs\n\n"
         # Define column alignments, widths, and names
         c_align = ("<", "<", "<", "<", ">", ">")
-        c_width = (16, 8, 20, 19, 25, 10)
+
+        c_width = (16, 8, min(max(len(j.alias) for j in self.jobs), 40), 19, 25, 10)
         c_name = ("TZ Info", "Type", "Func/Alias", "Due At", "Due In", "Attempts")
 
         # Create format string for each column
@@ -268,8 +269,8 @@ class Scheduler:
             tz=self.tz,
         )
         async with self.lock:
-            heapq.heappush(self.jobs, job)
-        self.job_lookup[alias] = job  # Track the job by its new alias
+            bisect.insort(self.jobs, job)
+            self.job_lookup[alias] = job  # Track the job by its new alias
 
     async def cyclic(
         self,
@@ -306,40 +307,40 @@ class Scheduler:
     ):
         await self._schedule(coro, time, max_runs=1, alias=alias, args=args, kwargs=kwargs, tags=tags)
 
-    async def daily(
-        self,
-        coro: Callable,
-        time: datetime.time | None = None,
-        alias: str | None = None,
-        args: tuple[Any] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        tags: set[str] | None = None,
-    ):
-        await self._schedule(coro, time, datetime.timedelta(days=1), alias=alias, args=args, kwargs=kwargs, tags=tags)
+    # async def daily(
+    #     self,
+    #     coro: Callable,
+    #     time: datetime.time | None = None,
+    #     alias: str | None = None,
+    #     args: tuple[Any] | None = None,
+    #     kwargs: dict[str, Any] | None = None,
+    #     tags: set[str] | None = None,
+    # ):
+    #     await self._schedule(coro, time, datetime.timedelta(days=1), alias=alias, args=args, kwargs=kwargs, tags=tags)
 
-    async def hourly(
-        self,
-        coro: Callable,
-        time: datetime.time | None = None,
-        alias: str | None = None,
-        args: tuple[Any] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        tags: set[str] | None = None,
-    ):
-        await self._schedule(coro, time, datetime.timedelta(hours=1), alias=alias, args=args, kwargs=kwargs, tags=tags)
+    # async def hourly(
+    #     self,
+    #     coro: Callable,
+    #     time: datetime.time | None = None,
+    #     alias: str | None = None,
+    #     args: tuple[Any] | None = None,
+    #     kwargs: dict[str, Any] | None = None,
+    #     tags: set[str] | None = None,
+    # ):
+    #     await self._schedule(coro, time, datetime.timedelta(hours=1), alias=alias, args=args, kwargs=kwargs, tags=tags)
 
-    async def minutely(
-        self,
-        coro: Callable,
-        time: datetime.time | None = None,
-        alias: str | None = None,
-        args: tuple[Any] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        tags: set[str] | None = None,
-    ):
-        await self._schedule(
-            coro, time, datetime.timedelta(minutes=1), alias=alias, args=args, kwargs=kwargs, tags=tags
-        )
+    # async def minutely(
+    #     self,
+    #     coro: Callable,
+    #     time: datetime.time | None = None,
+    #     alias: str | None = None,
+    #     args: tuple[Any] | None = None,
+    #     kwargs: dict[str, Any] | None = None,
+    #     tags: set[str] | None = None,
+    # ):
+    #     await self._schedule(
+    #         coro, time, datetime.timedelta(minutes=1), alias=alias, args=args, kwargs=kwargs, tags=tags
+    #     )
 
     async def remove_job(self, alias: str):
         # Find and remove the job from both the heap and the lookup dictionary
@@ -347,13 +348,11 @@ class Scheduler:
             logger.warning(f"No job found with the alias '{alias}'.")
             return
 
-        job_to_remove = self.job_lookup.pop(alias)
-
         # Remove the job from the heap
         try:
-            self.jobs.remove(job_to_remove)
             async with self.lock:
-                heapq.heapify(self.jobs)  # Reorder the heap after removing a job
+                job_to_remove = self.job_lookup.pop(alias)
+                self.jobs.remove(job_to_remove)
             logger.info(f"Successfully removed job '{alias}'.")
         except ValueError:
             logger.warning(f"Job '{alias}' could not be found in the job list.")
@@ -456,8 +455,8 @@ class Scheduler:
     async def reset(self):
         async with self.lock:
             self.jobs.clear()
-        self.job_lookup.clear()
-        self.alias_counts.clear()
+            self.job_lookup.clear()
+            self.alias_counts.clear()
         logger.info("Scheduler has been reset")
 
     async def run(self, stop_event: asyncio.Event):
@@ -470,7 +469,7 @@ class Scheduler:
             next_job = self.jobs[0]
             if next_job.next_run <= datetime.datetime.now(tz=self.tz):
                 async with self.lock:
-                    job = heapq.heappop(self.jobs)
+                    job = self.jobs.pop(0)
                 await self.queue.put(job)  # Put the job into the queue instead of running directly
             else:
                 with suppress(asyncio.TimeoutError):
