@@ -97,7 +97,6 @@ class LogSettings(BaseSettings):
 
     level: str = "info"
     colors: bool = True
-    print_schedule_interval: int = 0
 
 
 class HueBridgeSettings(BaseSettings):
@@ -105,12 +104,6 @@ class HueBridgeSettings(BaseSettings):
 
     addr: str
     username: str
-
-
-class GeoSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="geo_", extra="ignore")
-
-    location_name: str | None = None
 
 
 class DatabaseSettings(BaseSettings):
@@ -137,7 +130,6 @@ class Settings(BaseSettings):
 
     log: LogSettings = Field(default_factory=LogSettings)
     hue_bridge: HueBridgeSettings = Field(default_factory=HueBridgeSettings)
-    geo: GeoSettings = Field(default_factory=GeoSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     healthcheck: HealthCheckSettings = Field(default_factory=HealthCheckSettings)
     continuity: ContinuitySettings = Field(default_factory=ContinuitySettings)

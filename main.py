@@ -36,7 +36,7 @@ async def main(loop):
     parser.add_argument("-c", "--config", **_environ_or_required("CONFIG_FILE"))  # type: ignore
     args = parser.parse_args()
 
-    config = parse_config(args.config)
+    config = parse_config(args.config, raise_if_na=True, tag=None)  # type: ignore
     settings = Settings.model_validate(config.get("settings", {}))
 
     configure_logging(settings.log.level, console_colors=settings.log.colors)
@@ -70,7 +70,7 @@ async def main(loop):
         finished_task = finished.pop()
         logger.warning(f"Task {finished_task.get_name()!r} exited, shutting down gracefully")
 
-        graceful_shutdown_max_time = 60  # seconds
+        graceful_shutdown_max_time = 5.0  # seconds
         for task in pending:
             with suppress(asyncio.TimeoutError):
                 logger.debug(f"Waiting task {task.get_name()!r} to shutdown gracefully")
@@ -136,7 +136,7 @@ async def main(loop):
         def event_listener():
             logger.info("Creating HueEventStreamListener...")
             listener = HueEventStreamListener(bridge_v2.event_stream(), task_pool)
-            task_pool.add(listener.run(stop_event))
+            tasks.add(asyncio.create_task(listener.run(stop_event), name="hue_stream_listener"))
             return listener
 
         # If someone asks for event listener

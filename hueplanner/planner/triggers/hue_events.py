@@ -46,6 +46,5 @@ class PlanTriggerOnHueButtonEvent(PlanTriggerOnHueEvent, Serializable):
                 if data["id"] == self.resource_id and data["type"] == "button":
                     report = data[data["type"]]["button_report"]
                     if report["event"] == self.action:
-                        logger.info("Triggered event", hue_event=event)
                         return True
         return False

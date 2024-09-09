@@ -27,6 +27,7 @@ class HueEventStreamListener:
     async def _handle_event(self, event: HueEvent):
         for handler in self._handlers:
             if await handler.check(event):
+                logger.info("Triggered event", hue_event=event, handler=handler.handle)
                 await handler.handle(event)
 
     def register_callback(
@@ -52,8 +53,8 @@ class HueEventStreamListener:
                     # Reset the retry counter on successful connection
                     retry_counter = 0
                     async for event in events:
-                        self.task_pool.add(self._handle_event(event))
-                        # await self._handle_event(event)
+                        # self.task_pool.add(self._handle_event(event))
+                        await self._handle_event(event)
             except Exception:
                 logger.exception("Event stream closed with error")
                 terminate_task.cancel()

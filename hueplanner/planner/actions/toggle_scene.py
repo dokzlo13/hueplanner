@@ -18,35 +18,36 @@ logger = structlog.getLogger(__name__)
 @dataclass(kw_only=True)
 class PlanActionToggleStoredScene(PlanAction, Serializable):
     stored_scene: str
-    fallback_nearest_scheduler_job_tag: str | None = None
+    fallback_nearest_task_tag: str | None = None
     target_db: str = "stored_scenes"
 
     class _Model(BaseModel):
         stored_scene: str
-        fallback_nearest_scheduler_job_tag: str | None = None
+        fallback_nearest_task_tag: str | None = None
 
     @staticmethod
-    async def run_nearest_scheduled_job(tag: str, scheduler: Scheduler):
-        logger.debug("Looking for nearest previous job")
-        prev_job = await scheduler.previous_closest_job(tags={tag})
-        if prev_job is not None:
-            logger.info("Found closest previous job", job=prev_job)
+    async def run_nearest_scheduled_task(tag: str, scheduler: Scheduler):
+        logger.debug("Looking for nearest previous task")
+        prev_task = scheduler.previous_closest_task(tags={tag})
+        if prev_task is not None:
+            logger.info("Found closest previous task", task=prev_task)
         else:
-            logger.warning("No previous closest job available by time")
+            logger.warning("No previous closest task available by time")
 
-        next_job = await scheduler.next_closest_job(tags={tag})
-        if next_job is not None:
-            logger.info("Found closest next job", job=next_job)
+        next_task = scheduler.next_closest_task(tags={tag})
+        if next_task is not None:
+            logger.info("Found closest next task", task=next_task)
         else:
-            logger.warning("No next closest job available by time")
+            logger.warning("No next closest task available by time")
 
-        job = prev_job if prev_job else next_job
-        if not job:
+        task = prev_task if prev_task else next_task
+        if not task:
             # If both are unavailable, log error and return
-            logger.error("No closest jobs available")
+            logger.error("No closest tasks available")
             return
-        logger.debug("Executing closest job to current time (off schedule)", job=job)
-        await job.execute(off_schedule=True)
+
+        logger.debug("Executing closest task to current time (off schedule)", task=task)
+        await task.execute()
 
     async def define_action(
         self,
@@ -59,14 +60,12 @@ class PlanActionToggleStoredScene(PlanAction, Serializable):
 
             scene = await scenes.get(self.stored_scene)
             if not scene:
-                if self.fallback_nearest_scheduler_job_tag:
+                if self.fallback_nearest_task_tag:
                     logger.debug(
                         "No current scene stored, performing fallback procedure",
-                        fallback_nearest_scheduler_job_tag=self.fallback_nearest_scheduler_job_tag,
+                        fallback_nearest_task_tag=self.fallback_nearest_task_tag,
                     )
-                    await self.run_nearest_scheduled_job(
-                        scheduler=scheduler, tag=self.fallback_nearest_scheduler_job_tag
-                    )
+                    await self.run_nearest_scheduled_task(scheduler=scheduler, tag=self.fallback_nearest_task_tag)
                 scene = await scenes.get(self.stored_scene)
             if not scene:
                 logger.error("Can't toggle scene, because it was not set yet")

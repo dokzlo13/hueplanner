@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time, timedelta, datetime, tzinfo
 from typing import Annotated
 
@@ -27,9 +27,9 @@ def parse_timedelta(value: str) -> timedelta:
 @dataclass(kw_only=True)
 class PlanTriggerOnce(PlanTrigger, Serializable):
     act_on: str
-    alias: str | None
-    scheduler_tag: str | None
-    variables_db: list[str]
+    alias: str | None = None
+    scheduler_tag: str | None = None
+    variables_db: list[str] = field(default_factory=list)
 
     class _Model(BaseModel):
         act_on: str
@@ -42,11 +42,10 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
         for variables_db in self.variables_db:
             variables_collections.append(await storage.create_collection(variables_db))
 
-        logger.debug("Applying once trigger", act_on=str(self.act_on))
-        alias = self.alias if self.alias is not None else f"task-{str(self.act_on)}"
+        alias = self.alias if self.alias is not None else f"task:'{str(self.act_on)}'"
         act_on_time = (await TimeParser(tz, variables_collections).parse(self.act_on)).timetz()
-        
-        print("\n\n\n", act_on_time, "\n\n\n")
+        logger.debug("Applying once trigger", act_on=str(self.act_on), act_on_time=act_on_time)
+
         scheduler.once(
             coro=action,
             run_at=act_on_time,
@@ -58,17 +57,27 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
 @dataclass
 class PlanTriggerPeriodic(PlanTrigger, Serializable):
     interval: timedelta
-    start_at: time | None = None
+    start_at: str | None = None
     alias: str | None = None
+    variables_db: list[str] = field(default_factory=list)
 
     class _Model(BaseModel):
         interval: Annotated[timedelta, BeforeValidator(parse_timedelta)]
-        start_at: time | None = None
+        start_at: str | None = None
         alias: str | None = None
+        variables_db: list[str] = []
 
-    async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, tz: tzinfo):
+    async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
         # start_at = self.start_at
         # if start_at is None:
         #     start_at = (datetime.now(tz) + self.interval).time()  # TODO: provide tz
-        logger.info("Applying periodic trigger", interval=str(self.interval), start_at=str(self.start_at))
-        scheduler.periodic(action, interval=self.interval, start_at=self.start_at, alias=self.alias)
+        variables_collections = []
+        for variables_db in self.variables_db:
+            variables_collections.append(await storage.create_collection(variables_db))
+
+        start_at = None
+        if self.start_at:
+            start_at = (await TimeParser(tz, variables_collections).parse(self.start_at)).timetz()
+
+        logger.info("Applying periodic trigger", interval=str(self.interval), start_at=str(start_at))
+        scheduler.periodic(action, interval=self.interval, start_at=start_at, alias=self.alias)

@@ -175,49 +175,48 @@ class ScheduleEntry(Protocol):
 class ScheduleOnce(ScheduleEntry):
     def __init__(
         self,
-        run_at: time | None = None,
+        run_at: time,
         tz: tzinfo | None = None,
     ) -> None:
         self.tz = tz
-        self.run_at = run_at if run_at else datetime.now(tz=self.tz).time()
+        self.run_at = run_at
 
-    def __repr__(self) -> str:
-        s = f"{self.__class__.__name__}(run_at={self.run_at}"
-        if self.tz is not None:
-            s += f", tz={self.tz}"
-        s += ")"
-        return s
+        # Current date and time
+        now = datetime.now(tz=self.tz)
 
-    def __hash__(self) -> int:
-        return hash(("once", self.run_at, self.tz))
+        # Calculate the full datetime for today with the given time
+        self.run_at_datetime = datetime.combine(now.date(), self.run_at, tzinfo=self.tz)
+
+        # If the calculated run_at time is in the past, shift it to the next day
+        if self.run_at_datetime <= now:
+            logger.info(
+                f"Scheduled time {self.run_at} has already passed today. Task will be rescheduled for tomorrow."
+            )
+            self.run_at_datetime += timedelta(days=1)
 
     def next_many(self, n: int = 1, pivot: datetime | None = None) -> tuple[datetime, ...]:
-        """Return the next execution time if it hasn't happened yet."""
+        """Return the next execution time if it's in the future, otherwise return an empty tuple."""
         if pivot is None:
             pivot = datetime.now(tz=self.tz)
 
-        # Calculate the exact scheduled time
-        scheduled_time = datetime.combine(pivot.date(), self.run_at, tzinfo=self.tz)
+        # If the run_at_datetime is still in the future, return it as a tuple
+        if self.run_at_datetime > pivot:
+            return (self.run_at_datetime,)
 
-        # If the scheduled time is in the past, return an empty tuple
-        if scheduled_time <= pivot:
-            return ()
-
-        return (scheduled_time,)  # Task happens once in the future
+        # If the execution time has passed, return an empty tuple
+        return ()
 
     def prev_many(self, n: int = 1, pivot: datetime | None = None) -> tuple[datetime, ...]:
-        """Return the previous execution time if it has already happened."""
+        """Return the previous execution time if it has already occurred, otherwise return an empty tuple."""
         if pivot is None:
             pivot = datetime.now(tz=self.tz)
 
-        # Calculate the exact scheduled time
-        scheduled_time = datetime.combine(pivot.date(), self.run_at, tzinfo=self.tz)
+        # If the run_at_datetime is in the past, return it as a tuple
+        if self.run_at_datetime <= pivot:
+            return (self.run_at_datetime,)
 
-        # If the task is still in the future, return an empty tuple
-        if scheduled_time > pivot:
-            return ()
-
-        return (scheduled_time,)  # Task has already happened
+        # If the execution time hasn't happened yet, return an empty tuple
+        return ()
 
 
 class SchedulePeriodic(ScheduleEntry):
@@ -348,14 +347,41 @@ class SchedulerTask:
         )
 
     async def run(self, stop_event: asyncio.Event):
-        while not stop_event.is_set() and (next_run := self.schedule.next()) is not None:
-            seconds_until_next_run = (next_run - datetime.now(self.tz)).total_seconds()
+        while not stop_event.is_set():
+            next_run = self.schedule.next()
+            if not next_run:
+                logger.debug("No next runs for task", task=self)
+                break
 
+            seconds_until_next_run = (next_run - datetime.now(self.tz) + timedelta(milliseconds=1)).total_seconds()
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=seconds_until_next_run)
                 return
 
-            await self.coro()
+            if datetime.now(self.tz) < next_run:
+                logger.warning("Some task execution time drifting happens, please adjust your schedule")  # wat?
+                continue
+
+            stop_task = asyncio.create_task(stop_event.wait())
+            wrapped_task = asyncio.create_task(self.coro())
+
+            done, pending = await asyncio.wait([stop_task, wrapped_task], return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+                try:
+                    await task  # Ensure is cancelled
+                except asyncio.CancelledError:
+                    if task is wrapped_task:
+                        logger.warning("Task cancelled due to stop_event trigger")
+
+            if not wrapped_task.cancelled():
+                # get the exception raised by a task
+                if exception := wrapped_task.exception():
+                    try:
+                        raise exception
+                    except Exception:
+                        logger.exception("Exception in the asyncio task", task=self)
+                        raise
 
     async def execute(self):
         return await self.coro()
@@ -367,10 +393,7 @@ class Scheduler:
         self.alias_generator = AliasGenerator()
 
         self.pending_tasks: asyncio.Queue[SchedulerTask] = asyncio.Queue()
-        # self.active_aio_tasks: set[asyncio.Task] = set()
-
         self._tasks: dict[asyncio.Task, SchedulerTask] = {}
-        # self._task_lock = asyncio.Lock()
 
     def _make_alias(self, coro: Task, alias: str | None) -> str:
         alias = alias or coro.__name__
@@ -413,7 +436,13 @@ class Scheduler:
         )
         self._schedule(task)
 
-    async def run(self, stop_event: asyncio.Event, exit_on_empty_schedule: bool = False):
+    async def run(
+        self,
+        stop_event: asyncio.Event,
+        *,
+        exit_on_empty_schedule: bool = False,
+        auto_unschedule: bool = False,
+    ):
         logger.info("Starting scheduler")
 
         while not stop_event.is_set():
@@ -428,22 +457,10 @@ class Scheduler:
                 aio_task = asyncio.create_task(scheduler_task.run(stop_event))
                 self._tasks[aio_task] = scheduler_task
 
-            for aio_task, scheduler_task in self._tasks.copy().items():
-                if aio_task.done():
-                    if not aio_task.cancelled():
-                        # get the exception raised by a task
-                        if exception := aio_task.exception():
-                            try:
-                                raise exception
-                            except Exception:
-                                logger.exception("Exception in the managed task:", task=scheduler_task)
-                                # raise
-
-                    logger.debug("Task unscheduled", task=scheduler_task, aio_task=aio_task)
-                    del self._tasks[aio_task]
-
             if exit_on_empty_schedule and not self._tasks:
                 break
+
+            self.cleanup_tasks(remove=auto_unschedule)
 
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), 1.0)
@@ -453,6 +470,22 @@ class Scheduler:
         logger.warning("Terminating scheduler")
         await self._shutdown_tasks()
         logger.info("Scheduler terminated")
+
+    def cleanup_tasks(self, remove: bool = True):
+        for aio_task, scheduler_task in self._tasks.copy().items():
+            if not aio_task.done():
+                continue
+            if not aio_task.cancelled():
+                # get the exception raised by a task
+                if exception := aio_task.exception():
+                    try:
+                        raise exception
+                    except Exception:
+                        logger.exception("Exception in the managed task:", task=scheduler_task)
+                        raise
+            if remove:
+                logger.debug("Task unscheduled", task=scheduler_task, aio_task=aio_task)
+                del self._tasks[aio_task]
 
     async def _shutdown_tasks(self):
         # If tasks not exited gracefully, terminate them by cancelling
@@ -470,19 +503,21 @@ class Scheduler:
             if not aio_task.done():
                 aio_task.cancel()
             else:
-                logger.debug(f"Task {aio_task.get_name()!r} exited", task=scheduler_task)
+                logger.debug(f"Task {aio_task.get_name()} exited", task=scheduler_task)
 
         for aio_task, scheduler_task in tasks:
             # TODO: WHAT TO DO WITH IT??
             # if asyncio.current_task() is aio_task:
             #     continue
+            if aio_task.done():
+                continue
 
             try:
                 await aio_task
-                logger.debug(f"Task {aio_task.get_name()!r} exited", task=scheduler_task)
+                logger.debug(f"Task {aio_task.get_name()} exited", task=scheduler_task)
 
             except asyncio.CancelledError:
-                logger.debug(f"Task {aio_task.get_name()!r} canceled", task=scheduler_task)
+                logger.debug(f"Task {aio_task.get_name()} canceled", task=scheduler_task)
 
             # except asyncio.TimeoutError:
             #     logger.warning(
@@ -498,33 +533,36 @@ class Scheduler:
         self.alias_generator.reset()
         logger.debug("Scheduler cleared")
 
-    def next_closest_task(self, tags: set[str] | None = None) -> SchedulerTask | None:
-        # Sort tasks based on the next scheduled run time (using next()), handling None cases
-        tasks = sorted(self._tasks.values(), key=lambda t: (t.schedule.next() is None, t.schedule.next()))
+    def next_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
+
+        available_tasks = [t for t in self._tasks.values() if t.schedule.next(pivot) is not None]
+        tasks = sorted(available_tasks, key=lambda t: t.schedule.next(pivot))  # type: ignore
         for task in tasks:
-            if tags is not None:
-                # Check if the task's tags match
-                if task.tags.issubset(tags):
-                    return task
-            else:
+            if tags is None:
                 return task
+            # Check if the task's tags match
+            if len(task.tags) and task.tags.issubset(tags):
+                return task
+
         return None
 
-    def previous_closest_task(self, tags: set[str] | None = None) -> SchedulerTask | None:
+    def previous_closest_task(
+        self, pivot: datetime | None = None, tags: set[str] | None = None
+    ) -> SchedulerTask | None:
         # Sort tasks based on the previous run time (using prev()), handling None cases
-        tasks = sorted(self._tasks.values(), key=lambda t: (t.schedule.prev() is None, t.schedule.prev()), reverse=True)
+        available_tasks = [t for t in self._tasks.values() if t.schedule.prev(pivot) is not None]
+        tasks = sorted(available_tasks, key=lambda t: t.schedule.prev(pivot), reverse=True)  # type: ignore
         for task in tasks:
-            if tags is not None:
-                # Check if the task's tags match
-                if task.tags.issubset(tags):
-                    return task
-            else:
+            if tags is None:
+                return task
+            # Check if the task's tags match
+            if len(task.tags) and task.tags.issubset(tags):
                 return task
         return None
 
     def __str__(self) -> str:
-        # Scheduler meta heading
-        scheduler_headings = "Scheduler Jobs\n\n"
+        if not self._tasks:
+            return "EMPTY SCHEDULE"
 
         # Determine the maximum length for the "Alias" field, with a minimum of 5 and a maximum of 20
         max_alias_length = min(max(5, max(len(task.alias) for task in self._tasks.values())), 20)
@@ -533,9 +571,23 @@ class Scheduler:
         max_tags_length = max(4, min(20, max(len(",".join(task.tags)) for task in self._tasks.values())))
 
         # Define column alignments, widths, and names
-        c_align = ("^", "<", ">", ">", ">")
-        c_width = (10, max_alias_length, max_tags_length, 20, 30)  # Dynamically set alias and tags width
-        c_name = ("Type", "Alias", "Tags", "Time Left", "Next Run (Exact Time)")
+        c_align = ("^", "<", ">", ">", ">", ">")
+        c_width = (
+            10,
+            max_alias_length,
+            max_tags_length,
+            20,
+            30,
+            30,
+        )  # Dynamically set alias and tags width, and add Previous Run column width
+        c_name = (
+            "Type",
+            "Alias",
+            "Tags",
+            "Time Left",
+            "Next Run",
+            "Previous Run",
+        )  # Add Previous Run column name
 
         # Create format string for each column
         form = [f"{{{idx}:{align}{width}}}" for idx, (align, width) in enumerate(zip(c_align, c_width))]
@@ -562,16 +614,23 @@ class Scheduler:
             next_run = task.schedule.next()
             if next_run is not None:
                 time_left = next_run - datetime.now(self.tz)
-                time_left_str = str(time_left).split(".")[0]  # remove microseconds for better readability
+                time_left_str = str(time_left)  # .split(".")[0]  # remove microseconds for better readability
                 next_run_str = next_run.strftime("%Y-%m-%d %H:%M:%S %Z")
             else:
                 time_left_str = "N/A"
                 next_run_str = "N/A"
 
-            # Add the task details to the table
-            job_table += fstring.format(task_type, alias, tags_str, time_left_str, next_run_str)
+            # Retrieve the previous run
+            prev_run = task.schedule.prev()
+            if prev_run is not None:
+                prev_run_str = prev_run.strftime("%Y-%m-%d %H:%M:%S %Z")
+            else:
+                prev_run_str = "N/A"
 
-        return scheduler_headings + job_table
+            # Add the task details to the table
+            job_table += fstring.format(task_type, alias, tags_str, time_left_str, next_run_str, prev_run_str)
+
+        return job_table
 
 
 # if __name__ == "__main__":
