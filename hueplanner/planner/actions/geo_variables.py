@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, tzinfo
 from typing import Any, Callable
 
 import astral
@@ -13,6 +13,7 @@ from geopy.geocoders import Nominatim
 from pydantic import BaseModel
 from timezonefinder import TimezoneFinder
 
+from hueplanner.ioc import IOC
 from hueplanner.planner.serializable import Serializable
 from hueplanner.storage.interface import IKeyValueStorage
 
@@ -140,7 +141,7 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
     location_name: str | None
     lat: float | None
     lng: float | None
-    # auto_set_timezone: bool
+    set_timezone: bool
 
     class _Model(BaseModel):
         variables_db: str = "geo_variables"
@@ -148,9 +149,9 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
         location_name: str | None = None
         lat: float | None = None
         lng: float | None = None
-        # auto_set_timezone: bool = False
+        set_timezone: bool = False
 
-    async def define_action(self, storage: IKeyValueStorage) -> EvaluatedAction:
+    async def define_action(self, storage: IKeyValueStorage, ioc: IOC) -> EvaluatedAction:
         location = None
 
         if self.cache_db:
@@ -179,6 +180,10 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
 
             return nop
 
+        if self.set_timezone:
+            logger.warning("Timezone updated from geolocation", tz=location.tzinfo)
+            ioc.declare(tzinfo, location.tzinfo)
+
         if self.cache_db:
             await cache.set("location", location)
             logger.info("Location cache updated", location=location)
@@ -187,7 +192,7 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
             variables = await storage.create_collection(self.variables_db)
             if (await variables.size()) > 0:
                 await variables.delete_all()
-                logger.warning("time_variables cache flushed")
+                logger.warning(f"variables_db {self.variables_db!r} cache flushed")
 
             for k, v in astronomical_variables_from_location(location).items():
                 logger.info(f"Astronomical event for today: {k:<10}: {str(v)}")

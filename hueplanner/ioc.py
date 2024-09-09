@@ -55,6 +55,7 @@ class Singleton(Provider):
         self.instance = instance
 
     def construct(self, resolution_context: "ResolutionContext") -> Any:
+        logger.debug("Singleton reused", instance=self.instance)
         return self.instance
 
     def __repr__(self) -> str:
@@ -73,8 +74,11 @@ class Factory(Provider):
 
     def construct(self, resolution_context: "ResolutionContext") -> Any:
         if self.allow_inject:
-            return resolution_context.resolve(self.factory)
-        return self.factory()
+            instance = resolution_context.resolve(self.factory)
+        else:
+            instance = self.factory()
+        logger.debug("Instance assembled with factory", factory=self.factory, instance=instance)
+        return instance
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({repr(self.factory)})"
@@ -92,7 +96,7 @@ class SingletonFactory(Provider):
             logger.debug("Singleton reused", instance=self._evaluated)
             return self._evaluated
         self._evaluated = self.factory.construct(resolution_context)
-        logger.debug("Instance assembled with factory", instance=self._evaluated)
+        logger.debug("Instance assembled with factory", factory=self.factory, instance=self._evaluated)
         return self._evaluated
 
     def __repr__(self) -> str:
@@ -286,7 +290,7 @@ class IOC:
             hints=hints,
             target=target,
         )
-        logger.debug("Trying inject", signature=signature)
+        logger.debug("Trying inject", signature=signature.sig)
 
         strict_resolve = True
         if extra_args or extra_kwargs:
@@ -302,7 +306,9 @@ class IOC:
             extra_args,
             extra_kwargs,
         )
-        return target(*args, **kwargs)
+        res = target(*args, **kwargs)
+        logger.debug("Successfully injected", signature=signature.sig)
+        return res
 
     def _resolve_full(
         self,

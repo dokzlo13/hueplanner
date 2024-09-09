@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 import structlog
@@ -29,7 +30,8 @@ class PlanActionReEvaluatePlan(PlanAction, Serializable):
             if self.reset_schedule:
                 logger.warning("Resetting Schedule")
                 await scheduler.reset()
-                logger.warning("Schedule reset")
+                logger.warning("Schedule reset performed")
+                await asyncio.sleep(1)
 
             await Planner(ioc).apply_plan(plan)
             logger.warning("Plan re-evaluated")

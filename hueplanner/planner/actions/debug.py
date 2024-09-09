@@ -16,7 +16,8 @@ logger = structlog.getLogger(__name__)
 class PlanActionPrintSchedule(PlanAction, Serializable):
     async def define_action(self, scheduler: Scheduler) -> EvaluatedAction:
         async def action():
-            logger.debug("Current schedule:")
+            # logger.debug("Current schedule:")
+            print(scheduler._tasks)
             print(scheduler, flush=True)
 
         return action

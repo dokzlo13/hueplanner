@@ -17,8 +17,11 @@ def load_plan(path: str, encoding: str | None = None) -> list[PlanEntry]:
     with open(path, "r", encoding=encoding) as f:
         master_config = yaml.safe_load(f)
         plan_entries = master_config.get("plan", [])
-        plan = [load_plan_entry(entry) for entry in plan_entries]
-        return plan
+        return load_plan_from_obj(plan_entries)
+
+
+def load_plan_from_obj(plan_data: list[dict[str, Any]]) -> list[PlanEntry]:
+    return [load_plan_entry(entry) for entry in plan_data]
 
 
 def generate_mappings(classes, prefix):

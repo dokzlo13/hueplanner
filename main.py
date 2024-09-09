@@ -7,27 +7,20 @@ from contextlib import suppress
 
 import structlog
 import uvloop
-from zoneinfo import ZoneInfo
+from pyaml_env import parse_config
 
-from hueplanner.dsl import load_plan
+from hueplanner.dsl import load_plan_from_obj
 from hueplanner.event_listener import HueEventStreamListener
 from hueplanner.hue import HueBridgeFactory
 from hueplanner.ioc import IOC, Factory, Singleton, SingletonFactory
 from hueplanner.logging_conf import configure_logging
-from hueplanner.planner import (
-    Plan,
-    PlanActionCallback,
-    PlanEntry,
-    Planner,
-    PlanTriggerOnce,
-)
+from hueplanner.planner import Plan, Planner
 from hueplanner.scheduler import Scheduler
-from hueplanner.settings import load_settings
+from hueplanner.settings import Settings
 from hueplanner.storage.interface import IKeyValueStorage
 from hueplanner.storage.memory import InMemoryKeyValueStorage
 from hueplanner.storage.sqlite import SqliteKeyValueStorage
 from hueplanner.task_pool import AsyncTaskPool
-from hueplanner.time_parser import TimeParser
 
 logger = structlog.getLogger(__name__)
 
@@ -42,13 +35,13 @@ async def main(loop):
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", **_environ_or_required("CONFIG_FILE"))  # type: ignore
     args = parser.parse_args()
-    # restore = args.restore
-    config_file = args.config
 
-    settings = load_settings(config_file)
+    config = parse_config(args.config)
+    settings = Settings.model_validate(config.get("settings", {}))
+
     configure_logging(settings.log.level, console_colors=settings.log.colors)
 
-    plan = load_plan(config_file)
+    plan = load_plan_from_obj(config.get("plan", {}))
 
     # Global stop event to stop 'em all!
     stop_event = asyncio.Event()
@@ -109,34 +102,18 @@ async def main(loop):
     bridge_v2 = bridge_factory.api_v2()
 
     async with storage_cls(db_path) as storage, bridge_v1, bridge_v2:
-        scenes_collection = await storage.create_collection("scenes")
-        await scenes_collection.delete_all()
-        logger.debug("scenes_collection cache flushed")
+        # scenes_collection = await storage.create_collection("scenes")
+        # await scenes_collection.delete_all()
+        # logger.debug("scenes_collection cache flushed")
 
-        # # Setting timezone
-        # tz = None
-        # if location is not None:
-        #     loc_tz = ZoneInfo(location.timezone)
-        #     if settings.tz:
-        #         logger.warning(
-        #             "Settings provides different timezone, then location. Settings value will be used.",
-        #             location=loc_tz,
-        #             settings=settings.tz,
-        #         )
-        #         tz = settings.tz
-        #     else:
-        #         tz = loc_tz
-        #         logger.warning("Using timezone from location", tz=tz)
-
-        # if tz is None and settings.tz:
-        #     tz = settings.tz
-        #     logger.warning("Using timezone from 'tz' setting", tz=tz)
-        tz = None
+        tz = settings.tz
         if tz is None:
             from tzlocal import get_localzone
 
             tz = get_localzone()
-            logger.warning("Timezone not provided, using local timezone", tz=tz)
+            logger.warning("Timezone not provided, using local timezone", tz=str(tz))
+        else:
+            logger.warning("Using timezone", tz=str(tz))
 
         # Running scheduler
         scheduler = Scheduler(tz=tz)
