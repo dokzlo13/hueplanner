@@ -419,7 +419,7 @@ class Scheduler:
         start_at: time | None = None,
         alias: str | None = None,
         tags: set[str] | None = None,
-    ):
+    ) -> SchedulerTask:
         task = SchedulerTask(
             schedule=SchedulePeriodic(interval=interval, start_at=start_at, tz=self.tz),
             coro=coro,
@@ -428,6 +428,7 @@ class Scheduler:
             tz=self.tz,
         )
         self._schedule(task)
+        return task
 
     def once(
         self,
@@ -436,7 +437,7 @@ class Scheduler:
         alias: str | None = None,
         tags: set[str] | None = None,
         shift_if_late: bool = False,
-    ):
+    ) -> SchedulerTask:
         task = SchedulerTask(
             schedule=ScheduleOnce(run_at=run_at, tz=self.tz, shift_if_late=shift_if_late),
             coro=coro,
@@ -445,6 +446,7 @@ class Scheduler:
             tz=self.tz,
         )
         self._schedule(task)
+        return task
 
     async def run(
         self,
@@ -543,30 +545,33 @@ class Scheduler:
         self.alias_generator.reset()
         logger.debug("Scheduler cleared")
 
-    def next_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
+    def get_schedule(self) -> tuple[SchedulerTask, ...]:
+        return tuple(sorted(self._tasks.values(), key=lambda t: t.schedule))
 
-        available_tasks = [t for t in self._tasks.values() if t.schedule.next(pivot) is not None]
-        tasks = sorted(available_tasks, key=lambda t: t.schedule.next(pivot))  # type: ignore
-        for task in tasks:
-            if tags is None:
-                return task
-            # Check if the task's tags match
-            if len(task.tags) and task.tags.issubset(tags):
-                return task
+    # def next_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
 
-        return None
+    #     available_tasks = [t for t in self._tasks.values() if t.schedule.next(pivot) is not None]
+    #     tasks = sorted(available_tasks, key=lambda t: t.schedule.next(pivot))  # type: ignore
+    #     for task in tasks:
+    #         if tags is None:
+    #             return task
+    #         # Check if the task's tags match
+    #         if len(task.tags) and task.tags.issubset(tags):
+    #             return task
 
-    def prev_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
-        # Sort tasks based on the previous run time (using prev()), handling None cases
-        available_tasks = [t for t in self._tasks.values() if t.schedule.prev(pivot) is not None]
-        tasks = sorted(available_tasks, key=lambda t: t.schedule.prev(pivot), reverse=True)  # type: ignore
-        for task in tasks:
-            if tags is None:
-                return task
-            # Check if the task's tags match
-            if len(task.tags) and task.tags.issubset(tags):
-                return task
-        return None
+    #     return None
+
+    # def prev_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
+    #     # Sort tasks based on the previous run time (using prev()), handling None cases
+    #     available_tasks = [t for t in self._tasks.values() if t.schedule.prev(pivot) is not None]
+    #     tasks = sorted(available_tasks, key=lambda t: t.schedule.prev(pivot), reverse=True)  # type: ignore
+    #     for task in tasks:
+    #         if tags is None:
+    #             return task
+    #         # Check if the task's tags match
+    #         if len(task.tags) and task.tags.issubset(tags):
+    #             return task
+    #     return None
 
     def __str__(self) -> str:
         if not self._tasks:
@@ -639,84 +644,3 @@ class Scheduler:
             job_table += fstring.format(task_type, alias, tags_str, time_left_str, next_run_str, prev_run_str)
 
         return job_table
-
-
-# if __name__ == "__main__":
-
-#     import sys
-
-#     import uvloop
-#     from logging_conf import configure_logging
-
-#     configure_logging(log_level="debug")
-
-#     import signal
-
-#     STOP_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
-
-#     async def main(loop):
-#         stop_event = asyncio.Event()
-
-#         # App termination handler
-#         def stop_all() -> None:
-#             stop_event.set()
-#             logger.warning("Shutting down service! Press ^C again to terminate")
-
-#             def terminate():
-#                 sys.exit("\nTerminated!\n")
-
-#             for sig in STOP_SIGNALS:
-#                 loop.remove_signal_handler(sig)
-#                 loop.add_signal_handler(sig, terminate)
-
-#         for sig in STOP_SIGNALS:
-#             loop.add_signal_handler(sig, stop_all)
-
-#         s = Scheduler()
-
-#         # async def printo():
-#         #     print(s.tasks)
-
-#         async def foo():
-#             print("FOO!")
-
-#         async def bar():
-
-#             # print(s.next_closest_task())
-#             # print(list(s._tasks.values()))
-#             # print(s.previous_closest_task())
-#             print(s)
-#             print("BAR!")
-
-#         async def tsk():
-#             await asyncio.sleep(7)
-#             print("ADDING TASK!")
-#             s.periodic(bar, timedelta(seconds=2))
-
-#         asyncio.create_task(tsk())
-
-#         # s.once(s.reset, (datetime.now() + timedelta(seconds=5)).time())
-#         s.periodic(foo, timedelta(seconds=1), tags={"hello"})
-#         s.periodic(foo, timedelta(seconds=1), alias="HEHEHE")
-#         s.periodic(bar, timedelta(seconds=2))
-#         # s.periodic(s.reset, timedelta(seconds=3))
-#         # await s.periodic(bar, timedelta(seconds=4))
-
-#         await s.run(stop_event, exit_on_empty_schedule=True)
-
-#     if sys.version_info >= (3, 11):
-#         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
-#             runner.run(main(runner.get_loop()))
-#     else:
-#         event_loop = uvloop.new_event_loop()
-#         event_loop.run_until_complete(main(event_loop))
-
-#     # t2 = SchedulePeriodic(timedelta(seconds=5))
-#     # t3 = SchedulePeriodic(timedelta(seconds=2))
-#     # t4 = ScheduleOnce((datetime.now() + timedelta(seconds=6)).time())
-
-#     # print([f"{x} - {str(x.next())}" for x in sorted([t1, t3, t2, t4])])
-#     # import time
-
-#     # time.sleep(4)
-#     # print([f"{x} - {str(x.next())}" for x in sorted([t1, t3, t2, t4])])

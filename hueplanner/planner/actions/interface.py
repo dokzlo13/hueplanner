@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Awaitable, Protocol, Callable
+from typing import Awaitable, Protocol
 
 import structlog
-
 
 logger = structlog.getLogger(__name__)
 

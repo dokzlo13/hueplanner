@@ -18,24 +18,24 @@ logger = structlog.getLogger(__name__)
 
 @dataclass(kw_only=True)
 class PlanActionStoreScene(PlanAction, Protocol):
-    store_as: str
+    db_key: str
+    target_db: str = "stored_scenes"
     activate: bool = True
-    target_collection: str = "stored_scenes"
 
     async def define_action(self, hue_v1: HueBridgeV1, storage: IKeyValueStorage) -> EvaluatedAction:
-        scenes = await storage.create_collection(self.target_collection)
+        scenes = await storage.create_collection(self.target_db)
 
         required_scene = None
         for scene in await hue_v1.get_scenes():
             if self.match_scene(scene):
                 required_scene = scene.model_copy()  # ensure we don't loose model in closure below
-                logger.info("Found required scene", scene=repr(required_scene), action=repr(self))
+                logger.info("Store scene action configured", scene=repr(required_scene.id), action=repr(self))
                 break
         else:
             raise ValueError("Required scene not found")
 
         async def set_scene():
-            await scenes.set(self.store_as, required_scene)
+            await scenes.set(self.db_key, required_scene)
             log = logger.bind(scene_id=required_scene.id, scene_name=required_scene.name)
             log.debug("Context current scene set to", scene=required_scene)
             if self.activate:
@@ -59,10 +59,10 @@ class PlanActionStoreSceneByName(PlanActionStoreScene, Serializable):
     group: int | None = None
 
     class _Model(BaseModel):
-        store_as: str
         name: str
+        db_key: str
+        target_db: str = "stored_scenes"
         group: int | None = None
-        target_collection: str = "stored_scenes"
 
     def match_scene(self, scene: Scene) -> bool:
         if scene.name == self.name:
@@ -78,9 +78,9 @@ class PlanActionStoreSceneById(PlanActionStoreScene, Serializable):
     id: str
 
     class _Model(BaseModel):
-        store_as: str
         id: str
-        target_collection: str = "stored_scenes"
+        db_key: str
+        target_db: str = "stored_scenes"
 
     def match_scene(self, scene: Scene) -> bool:
         return scene.id == self.id

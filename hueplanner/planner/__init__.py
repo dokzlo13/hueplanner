@@ -5,6 +5,7 @@ from .actions import (
     PlanActionPopulateGeoVariables,
     PlanActionPrintSchedule,
     PlanActionReEvaluatePlan,
+    PlanActionRunClosestSchedule,
     PlanActionSequence,
     PlanActionStoreSceneById,
     PlanActionStoreSceneByName,
@@ -12,10 +13,13 @@ from .actions import (
     PlanActionWithEvaluationCondition,
     PlanActionWithRuntimeCondition,
 )
-from .planner import PlanEntry, Planner, Plan
+from .planner import Plan, PlanEntry, Planner
 from .triggers import (
     PlanTrigger,
+    PlanTriggerDaily,
+    PlanTriggerHourly,
     PlanTriggerImmediately,
+    PlanTriggerMinutely,
     PlanTriggerOnce,
     PlanTriggerOnHueButtonEvent,
     PlanTriggerPeriodic,
@@ -30,6 +34,7 @@ ACTION_CLASSES = [
     PlanActionPrintSchedule,
     PlanActionFlushDb,
     PlanActionReEvaluatePlan,
+    PlanActionRunClosestSchedule,
     ## This cannot be parsed from config yet
     # PlanActionCallback,
     # PlanActionWithEvaluationCondition,
@@ -41,4 +46,7 @@ TRIGGER_CLASSES = [
     PlanTriggerOnce,
     PlanTriggerOnHueButtonEvent,
     PlanTriggerPeriodic,
+    PlanTriggerDaily,
+    PlanTriggerHourly,
+    PlanTriggerMinutely,
 ]

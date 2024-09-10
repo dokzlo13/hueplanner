@@ -5,10 +5,9 @@ from typing import Awaitable, Callable
 
 import structlog
 
-from hueplanner.hue.v2.event_stream import HueEventStream
 from hueplanner.hue.v2 import HueBridgeV2
-from hueplanner.hue.v2.models import HueEvent, HueEventData
-from hueplanner.task_pool import AsyncTaskPool
+from hueplanner.hue.v2.event_stream import HueEventStream
+from hueplanner.hue.v2.models import HueEvent
 
 logger = structlog.getLogger(__name__)
 
@@ -20,9 +19,8 @@ class EventHandler:
 
 
 class HueEventStreamListener:
-    def __init__(self, bridge_v2: HueBridgeV2, task_pool: AsyncTaskPool) -> None:
+    def __init__(self, bridge_v2: HueBridgeV2) -> None:
         self.bridge_v2 = bridge_v2
-        self.task_pool = task_pool
         self._handlers: list[EventHandler] = []
 
     async def _handle_event(self, event: HueEvent):
@@ -33,18 +31,20 @@ class HueEventStreamListener:
 
     def clean_callbacks(self):
         self._handlers = []
+        logger.info("Hue EventStream callbacks reset")
 
     def register_callback(
         self,
         check: Callable[[HueEvent], Awaitable[bool]],
         handle: Callable[[HueEvent], Awaitable[None]],
     ):
+        logger.info("Event callback registered to Hue EventStream listener", check=check, handle=handle)
         self._handlers.append(EventHandler(check, handle))
 
     async def run(self, stop_event: asyncio.Event):
         logger.debug("Reliable HUE event stream listener started")
         while not stop_event.is_set():
-            event_stream = self.bridge_v2.event_stream()
+            event_stream: HueEventStream = self.bridge_v2.event_stream()
 
             async def terminate():
                 await stop_event.wait()

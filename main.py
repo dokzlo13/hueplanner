@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 from contextlib import suppress
+from datetime import tzinfo
 
 import structlog
 import uvloop
@@ -11,6 +12,7 @@ from pyaml_env import parse_config
 
 from hueplanner.dsl import load_plan_from_obj
 from hueplanner.event_listener import HueEventStreamListener
+from hueplanner.healthcheck import HealthcheckServer
 from hueplanner.hue import HueBridgeFactory
 from hueplanner.ioc import IOC, Factory, Singleton, SingletonFactory
 from hueplanner.logging_conf import configure_logging
@@ -20,7 +22,6 @@ from hueplanner.settings import Settings
 from hueplanner.storage.interface import IKeyValueStorage
 from hueplanner.storage.memory import InMemoryKeyValueStorage
 from hueplanner.storage.sqlite import SqliteKeyValueStorage
-from hueplanner.task_pool import AsyncTaskPool
 
 logger = structlog.getLogger(__name__)
 
@@ -45,6 +46,19 @@ async def main(loop):
 
     # Global stop event to stop 'em all!
     stop_event = asyncio.Event()
+    # Event to signal when service is ready
+    service_ready = asyncio.Event()
+    service_ready.clear()
+
+    async def healthcheck_live(context):
+        if stop_event.is_set():
+            return False
+        return True
+
+    async def healthcheck_ready(context):
+        if service_ready.is_set():
+            return True
+        return False
 
     # App termination handler
     def stop_all() -> None:
@@ -63,6 +77,17 @@ async def main(loop):
 
     # Storing handlers for created asyncio tasks
     tasks = set()
+
+    # HealthCheck must start ASAP, to make health probes accessible.
+    if settings.healthcheck:
+        health_check_server = HealthcheckServer(healthcheck_live, healthcheck_ready, context=None)
+        tasks.add(
+            asyncio.create_task(
+                health_check_server.run(stop_event, settings.healthcheck.host, settings.healthcheck.port),
+                name="health_check",
+            )
+        )
+        logger.info("HealthCheck server task created", task_name="health_check")
 
     async def wait_tasks_shutdown():
         finished, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -119,13 +144,13 @@ async def main(loop):
         scheduler = Scheduler(tz=tz)
 
         ioc = IOC()
+
+        # Define timezone
+        ioc.declare(tzinfo, tz)
+
         # Storing hue bridge API's
         ioc.auto_declare(bridge_v1)
         ioc.auto_declare(bridge_v2)
-
-        # So plan entries may execute some asyncio tasks in background
-        task_pool = AsyncTaskPool()
-        ioc.auto_declare(task_pool)
 
         # Storage reference
         ioc.declare(IKeyValueStorage, storage)
@@ -134,9 +159,10 @@ async def main(loop):
         ioc.auto_declare(scheduler)
 
         def event_listener():
-            logger.info("Creating HueEventStreamListener...")
-            listener = HueEventStreamListener(bridge_v2, task_pool)
+            logger.debug("Creating Hue EventStream listener...")
+            listener = HueEventStreamListener(bridge_v2)
             tasks.add(asyncio.create_task(listener.run(stop_event), name="hue_stream_listener"))
+            logger.info("Hue EventStream listener created")
             return listener
 
         # If someone asks for event listener
@@ -156,19 +182,10 @@ async def main(loop):
         tasks.add(asyncio.create_task(scheduler.run(stop_event), name="scheduler_task"))
         tasks.add(asyncio.create_task(stop_event.wait(), name="stop_event_wait"))
 
-        # from pprint import pprint
-
-        # async def dbg_tasks(stop: asyncio.Event):
-        #     while not stop.is_set():
-        #         with suppress(asyncio.TimeoutError):
-        #             await asyncio.wait_for(stop.wait(), 3.0)
-        #         pprint(asyncio.all_tasks())
-
-        # tasks.add(asyncio.create_task(dbg_tasks(stop_event), name="dbg_tasks"))
-
-        logger.info("Tasks started, waiting for termination signal.")
+        # Ready to serve
+        service_ready.set()
+        logger.info("Service started, waiting for termination signal.")
         await wait_tasks_shutdown()
-        await task_pool.shutdown()
         logger.info("Bye!")
 
 

@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     log: LogSettings = Field(default_factory=LogSettings)
     hue_bridge: HueBridgeSettings = Field(default_factory=HueBridgeSettings)  # type: ignore
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    healthcheck: HealthCheckSettings = Field(default_factory=HealthCheckSettings)
+    healthcheck: HealthCheckSettings | None = Field(default=None)
 
     tz: TimezoneInfo | None = Field(default=None)
 

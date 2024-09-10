@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import time, timedelta, datetime, tzinfo
-from typing import Annotated
+from datetime import datetime, time, timedelta, tzinfo
+from typing import Annotated, Protocol
 
 import pytimeparse
 import structlog
@@ -11,9 +11,9 @@ from pydantic.functional_validators import BeforeValidator
 
 from hueplanner.planner.actions import EvaluatedAction
 from hueplanner.planner.serializable import Serializable
-from hueplanner.time_parser import TimeParser
 from hueplanner.scheduler import Scheduler
 from hueplanner.storage.interface import IKeyValueStorage
+from hueplanner.time_parser import TimeParser
 
 from .interface import PlanTrigger
 
@@ -26,14 +26,14 @@ def parse_timedelta(value: str) -> timedelta:
 
 @dataclass(kw_only=True)
 class PlanTriggerOnce(PlanTrigger, Serializable):
-    act_on: str
+    time: str
     alias: str | None = None
     scheduler_tag: str | None = None
     variables_db: list[str] = field(default_factory=list)
     shift_if_late: bool = False
 
     class _Model(BaseModel):
-        act_on: str
+        time: str
         alias: str | None = None
         scheduler_tag: str | None = None
         variables_db: list[str] = []
@@ -44,17 +44,17 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
         for variables_db in self.variables_db:
             variables_collections.append(await storage.create_collection(variables_db))
 
-        alias = self.alias if self.alias is not None else f"task:'{str(self.act_on)}'"
-        act_on_time = (await TimeParser(tz, variables_collections).parse(self.act_on)).timetz()
-        logger.debug("Applying once trigger", act_on=str(self.act_on), act_on_time=act_on_time)
+        alias = self.alias if self.alias is not None else f"task:'{str(self.time)}'"
+        act_on_time = (await TimeParser(tz, variables_collections).parse(self.time)).timetz()
 
-        scheduler.once(
+        task = scheduler.once(
             coro=action,
             run_at=act_on_time,
             alias=alias,
             tags={self.scheduler_tag} if self.scheduler_tag is not None else None,
             shift_if_late=self.shift_if_late,
         )
+        logger.info("Once trigger added to schedule", schedule=task.schedule, action=action)
 
 
 @dataclass
@@ -71,9 +71,6 @@ class PlanTriggerPeriodic(PlanTrigger, Serializable):
         variables_db: list[str] = []
 
     async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
-        # start_at = self.start_at
-        # if start_at is None:
-        #     start_at = (datetime.now(tz) + self.interval).time()  # TODO: provide tz
         variables_collections = []
         for variables_db in self.variables_db:
             variables_collections.append(await storage.create_collection(variables_db))
@@ -82,5 +79,50 @@ class PlanTriggerPeriodic(PlanTrigger, Serializable):
         if self.start_at:
             start_at = (await TimeParser(tz, variables_collections).parse(self.start_at)).timetz()
 
-        logger.info("Applying periodic trigger", interval=str(self.interval), start_at=str(start_at))
-        scheduler.periodic(action, interval=self.interval, start_at=start_at, alias=self.alias)
+        task = scheduler.periodic(action, interval=self.interval, start_at=start_at, alias=self.alias)
+        logger.info("Periodic trigger added to schedule", schedule=task.schedule, action=action)
+
+
+@dataclass(kw_only=True)
+class _PlanTriggerConvenientPeriodic(PlanTrigger, Serializable, Protocol):
+    time: str
+    alias: str | None = None
+    scheduler_tag: str | None = None
+    variables_db: list[str] = field(default_factory=list)
+
+    class _Model(BaseModel):
+        time: str
+        alias: str | None = None
+        scheduler_tag: str | None = None
+        variables_db: list[str] = []
+
+    def _get_interval(self) -> timedelta: ...
+
+    async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
+        variables_collections = []
+        for variables_db in self.variables_db:
+            variables_collections.append(await storage.create_collection(variables_db))
+
+        start_at = (await TimeParser(tz, variables_collections).parse(self.time)).timetz()
+        interval = self._get_interval()
+
+        task = scheduler.periodic(action, interval=interval, start_at=start_at, alias=self.alias)
+        logger.info("Periodic trigger added to schedule", schedule=task.schedule, action=action)
+
+
+@dataclass(kw_only=True)
+class PlanTriggerHourly(_PlanTriggerConvenientPeriodic):
+    def _get_interval(self) -> timedelta:
+        return timedelta(hours=1)
+
+
+@dataclass(kw_only=True)
+class PlanTriggerMinutely(_PlanTriggerConvenientPeriodic):
+    def _get_interval(self) -> timedelta:
+        return timedelta(minutes=1)
+
+
+@dataclass(kw_only=True)
+class PlanTriggerDaily(_PlanTriggerConvenientPeriodic):
+    def _get_interval(self) -> timedelta:
+        return timedelta(days=1)
