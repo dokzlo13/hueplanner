@@ -29,12 +29,12 @@ class PlanActionStoreScene(PlanAction, Protocol):
         for scene in await hue_v1.get_scenes():
             if self.match_scene(scene):
                 required_scene = scene.model_copy()  # ensure we don't loose model in closure below
-                logger.info("Store scene action configured", scene=repr(required_scene.id), action=repr(self))
                 break
         else:
             raise ValueError("Required scene not found")
 
         async def set_scene():
+            logger.info("Storing scene requested", action=repr(self))
             await scenes.set(self.db_key, required_scene)
             log = logger.bind(scene_id=required_scene.id, scene_name=required_scene.name)
             log.debug("Context current scene set to", scene=required_scene)
@@ -48,6 +48,7 @@ class PlanActionStoreScene(PlanAction, Protocol):
                 res = await hue_v1.activate_scene(required_scene.group, required_scene.id)
                 log.info("Scene activated", res=res)
 
+        logger.info("Store scene action prepared", scene=repr(required_scene.id), action=repr(self))
         return set_scene
 
     def match_scene(self, scene: Scene) -> bool: ...

@@ -152,8 +152,8 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
         set_timezone: bool = False
 
     async def define_action(self, storage: IKeyValueStorage, ioc: IOC) -> EvaluatedAction:
+        logger.warning("Preparing geo-location for astronomical events calculation")
         location = None
-
         if self.cache_db:
             cache = await storage.create_collection(self.cache_db)
             location = await cache.get("location")
@@ -174,6 +174,7 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
                 raise ValueError("PopulateGeoVariables action requires lat/lng or location_name provided")
 
         if not location:
+            logger.warning("Location unavailable, variables will not be calculated")
 
             async def nop():
                 logger.warning("Location unavailable, no time variables calculated")
@@ -189,6 +190,7 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
             logger.info("Location cache updated", location=location)
 
         async def action():
+            logger.info("Astronomical events calculation requested", action=repr(self))
             variables = await storage.create_collection(self.variables_db)
             if (await variables.size()) > 0:
                 await variables.delete_all()

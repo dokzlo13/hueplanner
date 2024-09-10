@@ -22,7 +22,7 @@ class PlanActionFlushDb(PlanAction, Serializable):
 
     async def define_action(self, storage: IKeyValueStorage) -> EvaluatedAction:
         async def action():
-            logger.info("Flushing database", name=self.target_db)
+            logger.info("Flushing database requested", action=repr(self))
             db = await storage.create_collection(self.target_db)
             await db.delete_all()
             logger.info("Database data removed", name=self.target_db)

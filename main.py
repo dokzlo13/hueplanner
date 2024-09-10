@@ -91,6 +91,7 @@ async def main(loop):
 
     async def wait_tasks_shutdown():
         finished, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        service_ready.clear()
 
         finished_task = finished.pop()
         logger.warning(f"Task {finished_task.get_name()!r} exited, shutting down gracefully")
@@ -127,10 +128,6 @@ async def main(loop):
     bridge_v2 = bridge_factory.api_v2()
 
     async with storage_cls(db_path) as storage, bridge_v1, bridge_v2:
-        # scenes_collection = await storage.create_collection("scenes")
-        # await scenes_collection.delete_all()
-        # logger.debug("scenes_collection cache flushed")
-
         tz = settings.tz
         if tz is None:
             from tzlocal import get_localzone
@@ -159,10 +156,10 @@ async def main(loop):
         ioc.auto_declare(scheduler)
 
         def event_listener():
-            logger.debug("Creating Hue EventStream listener...")
+            logger.debug("Creating HueEventStream...")
             listener = HueEventStreamListener(bridge_v2)
             tasks.add(asyncio.create_task(listener.run(stop_event), name="hue_stream_listener"))
-            logger.info("Hue EventStream listener created")
+            logger.info("HueEventStream created")
             return listener
 
         # If someone asks for event listener
@@ -184,7 +181,7 @@ async def main(loop):
 
         # Ready to serve
         service_ready.set()
-        logger.info("Service started, waiting for termination signal.")
+        logger.warning("Service started, waiting for termination signal")
         await wait_tasks_shutdown()
         logger.info("Bye!")
 

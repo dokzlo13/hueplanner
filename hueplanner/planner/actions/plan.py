@@ -34,7 +34,7 @@ class PlanActionReEvaluatePlan(PlanAction, Serializable):
             plan: Plan,
             scheduler: Scheduler,
         ):
-            logger.warning("Performing plan re-evaluation")
+            logger.warning("Plan re-evaluation requested", action=repr(self))
 
             if self.reset_event_listeners:
                 if event_listener is not None:
@@ -48,7 +48,9 @@ class PlanActionReEvaluatePlan(PlanAction, Serializable):
                 logger.info("Schedule reset performed")
                 await asyncio.sleep(1)
 
+            logger.info("Applying new plan...")
             await Planner(ioc).apply_plan(plan)
+
             logger.warning("Plan re-evaluated")
 
         return action

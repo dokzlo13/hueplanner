@@ -20,9 +20,11 @@ logger = structlog.getLogger(__name__)
 class PlanTriggerOnHueEvent(PlanTrigger, Protocol):
     async def apply_trigger(self, action: EvaluatedAction, stream_listener: HueEventStreamListener):
         async def cb_action(_: HueEvent) -> None:
+            logger.info("Hue event matched requirements, executing action", trigger=repr(self))
             return await action()
 
         stream_listener.register_callback(self._check, cb_action)
+        logger.info("Registered HueEventStream event listener", trigger=repr(self))
 
     async def _check(self, hevent: HueEvent) -> bool: ...
 

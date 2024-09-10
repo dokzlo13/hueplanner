@@ -1,5 +1,10 @@
-from .interface import PlanAction, EvaluatedAction
+import structlog
+
 from hueplanner.ioc import IOC
+
+from .interface import EvaluatedAction, PlanAction
+
+logger = structlog.getLogger(__name__)
 
 
 class PlanActionSequence(PlanAction):
@@ -16,13 +21,17 @@ class PlanActionSequence(PlanAction):
         return (action,)
 
     async def define_action(self, ioc: IOC) -> EvaluatedAction:
+        logger.info("Preparing sequence actions", actions=self._actions)
+
         evaluated_actions: list[EvaluatedAction] = []
         for action in self._actions:
             evaluated_action = await ioc.make(action.define_action)
             evaluated_actions.append(evaluated_action)
 
-        async def sequence_evaluated_action():
+        async def run_sequence_evaluated_action():
+            logger.info("Sequence action requested", action=repr(self))
             for evaluated_action in evaluated_actions:
                 await evaluated_action()
 
-        return sequence_evaluated_action
+        logger.info("Sequence actions prepared", evaluated_actions=evaluated_actions)
+        return run_sequence_evaluated_action

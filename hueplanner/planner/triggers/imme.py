@@ -15,5 +15,5 @@ logger = structlog.getLogger(__name__)
 @dataclass
 class PlanTriggerImmediately(PlanTrigger, Serializable):
     async def apply_trigger(self, action: EvaluatedAction):
-        logger.info(f"Executing action immediately: {action}")
+        logger.info("Executing action immediately", action=action, trigger=repr(self))
         await action()

@@ -30,8 +30,9 @@ class PlanActionToggleStoredScene(PlanAction, Serializable):
         hue_v1: HueBridgeV1,
     ) -> EvaluatedAction:
         async def toggle_current_scene():
-            scenes = await storage.create_collection(self.target_db)
+            logger.info("Scene toggling requested", action=repr(self))
 
+            scenes = await storage.create_collection(self.target_db)
             scene = await scenes.get(self.db_key)
             if not scene:
                 logger.warning("Can't toggle scene, because it was not set yet")

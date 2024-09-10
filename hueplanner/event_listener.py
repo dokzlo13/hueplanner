@@ -38,7 +38,7 @@ class HueEventStreamListener:
         check: Callable[[HueEvent], Awaitable[bool]],
         handle: Callable[[HueEvent], Awaitable[None]],
     ):
-        logger.info("Event callback registered to Hue EventStream listener", check=check, handle=handle)
+        # logger.info("Event listener registered to HueEventStreamListener", check=check, handle=handle)
         self._handlers.append(EventHandler(check, handle))
 
     async def run(self, stop_event: asyncio.Event):

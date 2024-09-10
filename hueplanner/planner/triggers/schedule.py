@@ -54,7 +54,7 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
             tags={self.scheduler_tag} if self.scheduler_tag is not None else None,
             shift_if_late=self.shift_if_late,
         )
-        logger.info("Once trigger added to schedule", schedule=task.schedule, action=action)
+        logger.info("Once trigger added to schedule", schedule=task.schedule)
 
 
 @dataclass

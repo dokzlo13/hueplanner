@@ -96,6 +96,8 @@ class PlanActionRunClosestSchedule(PlanAction, Serializable):
         strategy = STRATEGIES[self.strategy]
 
         async def run_closest_schedule(scheduler: Scheduler):
+            logger.info("Off-schedule task execution requested", action=repr(self))
+
             all_tasks = scheduler.get_schedule()
             tasks = []
 
@@ -111,11 +113,13 @@ class PlanActionRunClosestSchedule(PlanAction, Serializable):
             if not closest_task:
                 logger.warning("No closest task found based on strategy", strategy=self.strategy.name)
                 return
-            logger.debug(
+            logger.info(
                 "Found closest task, executing it at current time (off schedule)",
                 task=closest_task,
                 strategy=self.strategy.name,
             )
             await closest_task.execute()
+
+        logger.info("Run task off-schedule action prepared", action=repr(self))
 
         return run_closest_schedule
