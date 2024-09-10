@@ -10,6 +10,7 @@ from .actions import (
     PlanActionStoreSceneById,
     PlanActionStoreSceneByName,
     PlanActionToggleStoredScene,
+    PlanActionUpdateLightV2,
     PlanActionWithEvaluationCondition,
     PlanActionWithRuntimeCondition,
 )
@@ -35,6 +36,7 @@ ACTION_CLASSES = [
     PlanActionFlushDb,
     PlanActionReEvaluatePlan,
     PlanActionRunClosestSchedule,
+    PlanActionUpdateLightV2,
     ## This cannot be parsed from config yet
     # PlanActionCallback,
     # PlanActionWithEvaluationCondition,

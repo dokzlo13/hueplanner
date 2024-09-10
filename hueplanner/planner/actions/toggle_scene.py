@@ -26,7 +26,6 @@ class PlanActionToggleStoredScene(PlanAction, Serializable):
     async def define_action(
         self,
         storage: IKeyValueStorage,
-        scheduler: Scheduler,
         hue_v1: HueBridgeV1,
     ) -> EvaluatedAction:
         async def toggle_current_scene():
