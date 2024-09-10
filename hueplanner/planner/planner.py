@@ -13,7 +13,7 @@ class PlanEntry:
 
     async def apply(self, ioc: IOC):
         action = await ioc.make(self.action.define_action)
-        await ioc.make(self.trigger.apply_trigger, action)
+        await ioc.make(self.trigger.apply_trigger, ioc.inject(action))
 
 
 Plan = list[PlanEntry]

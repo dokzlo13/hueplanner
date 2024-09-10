@@ -119,20 +119,13 @@ class HealthCheckSettings(BaseSettings):
     port: int = 9090
 
 
-class ContinuitySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="continuity_", extra="ignore")
-
-    re_evaluate_plan: str | None = None
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     log: LogSettings = Field(default_factory=LogSettings)
-    hue_bridge: HueBridgeSettings = Field(default_factory=HueBridgeSettings)
+    hue_bridge: HueBridgeSettings = Field(default_factory=HueBridgeSettings)  # type: ignore
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     healthcheck: HealthCheckSettings = Field(default_factory=HealthCheckSettings)
-    continuity: ContinuitySettings = Field(default_factory=ContinuitySettings)
 
     tz: TimezoneInfo | None = Field(default=None)
 

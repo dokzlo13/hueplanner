@@ -30,12 +30,14 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
     alias: str | None = None
     scheduler_tag: str | None = None
     variables_db: list[str] = field(default_factory=list)
+    shift_if_late: bool = False
 
     class _Model(BaseModel):
         act_on: str
         alias: str | None = None
         scheduler_tag: str | None = None
         variables_db: list[str] = []
+        shift_if_late: bool = False
 
     async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
         variables_collections = []
@@ -51,6 +53,7 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
             run_at=act_on_time,
             alias=alias,
             tags={self.scheduler_tag} if self.scheduler_tag is not None else None,
+            shift_if_late=self.shift_if_late,
         )
 
 

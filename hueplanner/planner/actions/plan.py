@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import structlog
 from pydantic import BaseModel
 
+from hueplanner.event_listener import HueEventStreamListener
 from hueplanner.ioc import IOC
 from hueplanner.planner.serializable import Serializable
 from hueplanner.scheduler import Scheduler
@@ -18,19 +19,33 @@ logger = structlog.getLogger(__name__)
 
 @dataclass(kw_only=True)
 class PlanActionReEvaluatePlan(PlanAction, Serializable):
-    reset_schedule: bool
+    reset_schedule: bool = False
+    reset_event_listeners: bool = False
 
     class _Model(BaseModel):
-        reset_schedule: bool = True
+        reset_schedule: bool = False
+        reset_event_listeners: bool = False
 
-    async def define_action(self, ioc: IOC, plan: Plan, scheduler: Scheduler) -> EvaluatedAction:
-        async def action():
+    async def define_action(self) -> EvaluatedAction:
+
+        async def action(
+            event_listener: HueEventStreamListener | None,
+            ioc: IOC,
+            plan: Plan,
+            scheduler: Scheduler,
+        ):
             logger.warning("Performing plan re-evaluation")
 
+            if self.reset_event_listeners:
+                if event_listener is not None:
+                    logger.info("Resetting HUE EventListener callbacks")
+                    event_listener.clean_callbacks()
+                    logger.info("HUE Event Listener callbacks reset")
+
             if self.reset_schedule:
-                logger.warning("Resetting Schedule")
+                logger.info("Resetting Schedule")
                 await scheduler.reset()
-                logger.warning("Schedule reset performed")
+                logger.info("Schedule reset performed")
                 await asyncio.sleep(1)
 
             await Planner(ioc).apply_plan(plan)

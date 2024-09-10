@@ -177,6 +177,8 @@ class ScheduleOnce(ScheduleEntry):
         self,
         run_at: time,
         tz: tzinfo | None = None,
+        *,
+        shift_if_late: bool = True,
     ) -> None:
         self.tz = tz
         self.run_at = run_at
@@ -188,11 +190,18 @@ class ScheduleOnce(ScheduleEntry):
         self.run_at_datetime = datetime.combine(now.date(), self.run_at, tzinfo=self.tz)
 
         # If the calculated run_at time is in the past, shift it to the next day
-        if self.run_at_datetime <= now:
+        if self.run_at_datetime <= now and shift_if_late:
             logger.info(
                 f"Scheduled time {self.run_at} has already passed today. Task will be rescheduled for tomorrow."
             )
             self.run_at_datetime += timedelta(days=1)
+
+    def __repr__(self) -> str:
+        s = f"{self.__class__.__name__}(run_at={self.run_at}"
+        if self.tz is not None:
+            s += f", tz={self.tz}"
+        s += ")"
+        return s
 
     def next_many(self, n: int = 1, pivot: datetime | None = None) -> tuple[datetime, ...]:
         """Return the next execution time if it's in the future, otherwise return an empty tuple."""
@@ -426,9 +435,10 @@ class Scheduler:
         run_at: time,
         alias: str | None = None,
         tags: set[str] | None = None,
+        shift_if_late: bool = False,
     ):
         task = SchedulerTask(
-            schedule=ScheduleOnce(run_at=run_at, tz=self.tz),
+            schedule=ScheduleOnce(run_at=run_at, tz=self.tz, shift_if_late=shift_if_late),
             coro=coro,
             alias=self._make_alias(coro, alias),
             tags=tags or set(),
@@ -464,12 +474,12 @@ class Scheduler:
 
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), 1.0)
-                logger.warning("Stop signal received")
+                logger.debug("Stop signal received")
                 break
 
-        logger.warning("Terminating scheduler")
+        logger.info("Terminating scheduler")
         await self._shutdown_tasks()
-        logger.info("Scheduler terminated")
+        logger.warning("Scheduler terminated")
 
     def cleanup_tasks(self, remove: bool = True):
         for aio_task, scheduler_task in self._tasks.copy().items():
@@ -546,9 +556,7 @@ class Scheduler:
 
         return None
 
-    def previous_closest_task(
-        self, pivot: datetime | None = None, tags: set[str] | None = None
-    ) -> SchedulerTask | None:
+    def prev_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
         # Sort tasks based on the previous run time (using prev()), handling None cases
         available_tasks = [t for t in self._tasks.values() if t.schedule.prev(pivot) is not None]
         tasks = sorted(available_tasks, key=lambda t: t.schedule.prev(pivot), reverse=True)  # type: ignore

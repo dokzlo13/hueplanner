@@ -36,7 +36,7 @@ async def main(loop):
     parser.add_argument("-c", "--config", **_environ_or_required("CONFIG_FILE"))  # type: ignore
     args = parser.parse_args()
 
-    config = parse_config(args.config, raise_if_na=True, tag=None)  # type: ignore
+    config = parse_config(args.config, tag=None, default_value=None)  # type: ignore
     settings = Settings.model_validate(config.get("settings", {}))
 
     configure_logging(settings.log.level, console_colors=settings.log.colors)
@@ -135,7 +135,7 @@ async def main(loop):
 
         def event_listener():
             logger.info("Creating HueEventStreamListener...")
-            listener = HueEventStreamListener(bridge_v2.event_stream(), task_pool)
+            listener = HueEventStreamListener(bridge_v2, task_pool)
             tasks.add(asyncio.create_task(listener.run(stop_event), name="hue_stream_listener"))
             return listener
 
@@ -156,8 +156,17 @@ async def main(loop):
         tasks.add(asyncio.create_task(scheduler.run(stop_event), name="scheduler_task"))
         tasks.add(asyncio.create_task(stop_event.wait(), name="stop_event_wait"))
 
-        logger.info("Tasks started, waiting for termination signal.")
+        # from pprint import pprint
 
+        # async def dbg_tasks(stop: asyncio.Event):
+        #     while not stop.is_set():
+        #         with suppress(asyncio.TimeoutError):
+        #             await asyncio.wait_for(stop.wait(), 3.0)
+        #         pprint(asyncio.all_tasks())
+
+        # tasks.add(asyncio.create_task(dbg_tasks(stop_event), name="dbg_tasks"))
+
+        logger.info("Tasks started, waiting for termination signal.")
         await wait_tasks_shutdown()
         await task_pool.shutdown()
         logger.info("Bye!")

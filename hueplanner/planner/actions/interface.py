@@ -11,7 +11,7 @@ logger = structlog.getLogger(__name__)
 
 
 class EvaluatedAction(Protocol):
-    def __call__(self) -> Awaitable[None]: ...
+    def __call__(self, *args, **kwargs) -> Awaitable[None]: ...
 
 
 class PlanAction(Protocol):

@@ -28,7 +28,7 @@ class PlanActionToggleStoredScene(PlanAction, Serializable):
     @staticmethod
     async def run_nearest_scheduled_task(tag: str, scheduler: Scheduler):
         logger.debug("Looking for nearest previous task")
-        prev_task = scheduler.previous_closest_task(tags={tag})
+        prev_task = scheduler.prev_closest_task(tags={tag})
         if prev_task is not None:
             logger.info("Found closest previous task", task=prev_task)
         else:

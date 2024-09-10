@@ -4,8 +4,9 @@ import inspect
 from abc import abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass
-from functools import partial, wraps
-from inspect import get_annotations, isclass, isfunction
+from functools import wraps
+from inspect import isclass, isfunction
+from types import UnionType
 from typing import (
     Any,
     Callable,
@@ -14,6 +15,8 @@ from typing import (
     Tuple,
     Type,
     Union,
+    get_args,
+    get_origin,
     get_type_hints,
     runtime_checkable,
 )
@@ -104,9 +107,16 @@ class SingletonFactory(Provider):
 
 
 class ResolutionContext:
-    def __init__(self, ioc_container: "IOC", *, bypass_cache: bool = False) -> None:
+    def __init__(
+        self,
+        ioc_container: "IOC",
+        *,
+        bypass_cache: bool = False,
+        nullable_allowed: bool = True,
+    ) -> None:
         self.ioc_container = ioc_container
         self.bypass_cache = bypass_cache
+        self.nullable_allowed = nullable_allowed
         self._currently_resolving: set = set()
         self._resolution_cache: dict[Any, Any] = {}
 
@@ -135,6 +145,33 @@ def is_function_or_class(variable):
     if isclass(variable):
         return True  # It's a class
     return False  # It's neither a function nor a class
+
+
+# Helper function to check if the type is a union with None, 3.11+ only
+def is_optional_nullable(typ) -> bool:
+    origin = get_origin(typ)
+
+    # Handle both Union and new-style | unions (UnionType)
+    if origin is Union or isinstance(typ, UnionType):
+        return type(None) in get_args(typ)
+
+    return False
+
+
+# New helper function to extract the real type (excluding None)
+def get_optional_real_type(typ):
+    origin = get_origin(typ)
+
+    # Handle both Union and new-style | unions (UnionType)
+    if origin is Union or isinstance(typ, UnionType):
+        # Filter out NoneType to get the real required type
+        non_none_types = tuple(t for t in get_args(typ) if t is not type(None))
+        if len(non_none_types) == 1:
+            return non_none_types[0]  # Return the single real type
+        else:
+            raise ValueError(f"Unexpected union with more than one non-None type: {non_none_types}")
+
+    return typ  # Return the original type if not a union
 
 
 def has_required_args(factory: Constructable) -> bool:
@@ -290,7 +327,7 @@ class IOC:
             hints=hints,
             target=target,
         )
-        logger.debug("Trying inject", signature=signature.sig)
+        logger.debug("Starting resolution", signature=signature.sig)
 
         strict_resolve = True
         if extra_args or extra_kwargs:
@@ -307,7 +344,7 @@ class IOC:
             extra_kwargs,
         )
         res = target(*args, **kwargs)
-        logger.debug("Successfully injected", signature=signature.sig)
+        logger.debug("Successfully resolved", signature=signature.sig, args=args, kwargs=kwargs)
         return res
 
     def _resolve_full(
@@ -336,9 +373,21 @@ class IOC:
 
         return tuple(args_resolved.values()), kwargs_resolved
 
-    def _resolve_dependency(self, typ, context: ResolutionContext) -> Any:
-        if (provider := self._registry.get(typ)) is None:
-            raise IocResolutionFailed(f"no provider for dependency of type {type!r}")
+    def _resolve_dependency(self, typ, context) -> Any:
+        # Check if the type is optional (e.g., Foo | None)
+        if is_optional := is_optional_nullable(typ):
+            # Extract the real type (Foo in Foo | None)
+            real_typ = get_optional_real_type(typ)
+        else:
+            real_typ = typ
+
+        # Try to get the provider for the real type
+        if (provider := self._registry.get(real_typ)) is None:
+            # If it's optional and nullables are allowed in the context, return None
+            if is_optional and context.nullable_allowed:
+                return None
+            raise IocResolutionFailed(f"no provider for dependency of type {real_typ!r}")
+
         return provider.construct(context)
 
     def _extract_dependencies(self, signature: _Signature):
@@ -377,24 +426,13 @@ class IOC:
     #     # args, kwargs = normalize_args(inspect.signature(target), args, kwargs)
     #     return partial(target, *args, **kwargs)
 
-    # def inject(self, fn: Callable[..., Any]) -> Callable[..., Any]:
-    #     signature = self._make_sign(fn)
+    def inject(self, fn: Callable[..., Any]) -> Callable[..., Any]:
 
-    #     @wraps(fn)
-    #     def wrapper(*extra_args, **extra_kwargs) -> Any:
-    #         args_resolved, kwargs_resolved = self._resolve_full(
-    #             signature, ResolutionContext(self), strict_resolve=False
-    #         )
-    #         args, kwargs = normalize_args(
-    #             signature.sig,
-    #             args_resolved,
-    #             kwargs_resolved,
-    #             extra_args,
-    #             extra_kwargs,
-    #         )
-    #         return fn(*args, **kwargs)
+        @wraps(fn)
+        def wrapper(*args, **kwargs) -> Any:
+            return self.make(fn, *args, **kwargs)
 
-    #     return wrapper
+        return wrapper
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -456,6 +494,40 @@ def test_factory_with_injection():
     assert resolved_foobar.bar.foo.a == 3
 
 
+def test_optional_none_injection():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    class Bar:
+        def __init__(self, foo: Foo | None) -> None:
+            self.foo = foo
+
+    resolved_foobar = ioc.make(Bar)
+    assert isinstance(resolved_foobar, Bar)
+    assert resolved_foobar.foo is None
+
+
+def test_optional_value_injection():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    class Bar:
+        def __init__(self, foo: Foo | None) -> None:
+            self.foo = foo
+
+    ioc.declare(Foo, Foo(a=1))
+
+    resolved_foobar = ioc.make(Bar)
+    assert isinstance(resolved_foobar, Bar)
+    assert getattr(resolved_foobar, "foo") == 1
+
+
 def test_error_handling():
     ioc = IOC()
 
@@ -502,6 +574,31 @@ def test_auto_declare():
     assert resolved_bar.a == 42
 
 
+def test_injection_decorator():
+    ioc = IOC()
+
+    class Foo:
+        def __init__(self, a: int) -> None:
+            self.a = a
+
+    class Bar:
+        def __init__(self, foo: Foo) -> None:
+            self.foo = foo
+
+    def make_bar(foo: Foo) -> Bar:
+        return Bar(foo)
+
+    ioc.declare(Foo, lambda: Foo(6))  # Declaring Foo as Factory
+    ioc.declare(Bar, Factory(make_bar, allow_inject=True))  # Declaring Bar with automatic injection
+
+    @ioc.inject
+    def baz(foo: Foo, bar: Bar):
+        return foo.a, bar.foo.a
+
+    result = baz()
+    assert result == (6, 6)
+
+
 # def test_circular_dependency_handling():
 
 
@@ -527,31 +624,6 @@ def test_auto_declare():
 #     # with pytest.raises(Exception) as excinfo:
 #     #     ioc.make(brr)
 #     # assert "recursive" in str(excinfo.value)
-
-
-# def test_injection_decorator():
-#     ioc = IOC()
-
-#     class Foo:
-#         def __init__(self, a: int) -> None:
-#             self.a = a
-
-#     class Bar:
-#         def __init__(self, foo: Foo) -> None:
-#             self.foo = foo
-
-#     def make_bar(foo: Foo) -> Bar:
-#         return Bar(foo)
-
-#     ioc.declare(Foo, lambda: Foo(6))  # Declaring Foo as Factory
-#     ioc.declare(Bar, Factory(make_bar, allow_inject=True))  # Declaring Bar with automatic injection
-
-#     @ioc.inject
-#     def baz(foo: Foo, bar: Bar):
-#         return foo.a, bar.foo.a
-
-#     result = baz()
-#     assert result == (6, 6)
 
 
 # def test_partial_initialization():
