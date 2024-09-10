@@ -33,8 +33,6 @@ class PlanActionUpdateLightV2(PlanAction, Serializable):
         self.update = LightUpdateRequest.model_validate(self.update)
 
     async def define_action(self) -> EvaluatedAction:
-        print("\n\nupdate:", repr(self.update), type(self.update))
-
         async def update_light(hue_v2: HueBridgeV2):
             logger.info("Light update requested", action=repr(self))
 
