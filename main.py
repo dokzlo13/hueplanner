@@ -4,40 +4,28 @@ import os
 import signal
 import sys
 from contextlib import suppress
+from datetime import tzinfo
 
 import structlog
 import uvloop
-from zoneinfo import ZoneInfo
+from pyaml_env import parse_config
 
-from hueplanner.dsl import load_plan
-from hueplanner.geo import astronomical_variables_from_location, get_location
+from hueplanner.dsl import load_plan_from_obj
+from hueplanner.event_listener import HueEventStreamListener
+from hueplanner.healthcheck import HealthcheckServer
 from hueplanner.hue import HueBridgeFactory
+from hueplanner.ioc import IOC, Factory, Singleton, SingletonFactory
 from hueplanner.logging_conf import configure_logging
-from hueplanner.planner import (
-    Context,
-    PlanActionCallback,
-    PlanEntry,
-    Planner,
-    PlanTriggerOnce,
-)
+from hueplanner.planner import Plan, Planner
 from hueplanner.scheduler import Scheduler
-from hueplanner.settings import load_settings
+from hueplanner.settings import Settings
+from hueplanner.storage.interface import IKeyValueStorage
 from hueplanner.storage.memory import InMemoryKeyValueStorage
 from hueplanner.storage.sqlite import SqliteKeyValueStorage
-from hueplanner.time_parser import TimeParser
 
 logger = structlog.getLogger(__name__)
 
 STOP_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
-
-
-async def graceful_shutdown(loop, signal=None):
-    """Cancel all tasks and gracefully shut down the asyncio loop."""
-    tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    loop.stop()
 
 
 def _environ_or_required(key):
@@ -48,16 +36,29 @@ async def main(loop):
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", **_environ_or_required("CONFIG_FILE"))  # type: ignore
     args = parser.parse_args()
-    # restore = args.restore
-    config_file = args.config
 
-    settings = load_settings(config_file)
+    config = parse_config(args.config, tag=None, default_value=None)  # type: ignore
+    settings = Settings.model_validate(config.get("settings", {}))
+
     configure_logging(settings.log.level, console_colors=settings.log.colors)
 
-    plan = load_plan(config_file)
+    plan = load_plan_from_obj(config.get("plan", {}))
 
     # Global stop event to stop 'em all!
     stop_event = asyncio.Event()
+    # Event to signal when service is ready
+    service_ready = asyncio.Event()
+    service_ready.clear()
+
+    async def healthcheck_live(context):
+        if stop_event.is_set():
+            return False
+        return True
+
+    async def healthcheck_ready(context):
+        if service_ready.is_set():
+            return True
+        return False
 
     # App termination handler
     def stop_all() -> None:
@@ -74,20 +75,28 @@ async def main(loop):
     for sig in STOP_SIGNALS:
         loop.add_signal_handler(sig, stop_all)
 
-    bridge_factory = HueBridgeFactory(address=settings.hue_bridge.addr, access_token=settings.hue_bridge.username)
-    bridge_v1 = bridge_factory.api_v1()
-    bridge_v2 = bridge_factory.api_v2()
-
     # Storing handlers for created asyncio tasks
     tasks = set()
 
+    # HealthCheck must start ASAP, to make health probes accessible.
+    if settings.healthcheck:
+        health_check_server = HealthcheckServer(healthcheck_live, healthcheck_ready, context=None)
+        tasks.add(
+            asyncio.create_task(
+                health_check_server.run(stop_event, settings.healthcheck.host, settings.healthcheck.port),
+                name="health_check",
+            )
+        )
+        logger.info("HealthCheck server task created", task_name="health_check")
+
     async def wait_tasks_shutdown():
         finished, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        service_ready.clear()
 
         finished_task = finished.pop()
         logger.warning(f"Task {finished_task.get_name()!r} exited, shutting down gracefully")
 
-        graceful_shutdown_max_time = 60  # seconds
+        graceful_shutdown_max_time = 5.0  # seconds
         for task in pending:
             with suppress(asyncio.TimeoutError):
                 logger.debug(f"Waiting task {task.get_name()!r} to shutdown gracefully")
@@ -114,113 +123,67 @@ async def main(loop):
         storage_cls = InMemoryKeyValueStorage
         db_path = ""
 
+    bridge_factory = HueBridgeFactory(address=settings.hue_bridge.addr, access_token=settings.hue_bridge.username)
+    bridge_v1 = bridge_factory.api_v1()
+    bridge_v2 = bridge_factory.api_v2()
+
     async with storage_cls(db_path) as storage, bridge_v1, bridge_v2:
-        geocache = await storage.create_collection("geocache")
-        time_variables = await storage.create_collection("time_variables")
-        scenes_collection = await storage.create_collection("scenes")
-        await scenes_collection.delete_all()
-        logger.debug("scenes_collection cache flushed")
-
-        location = None
-        if settings.geo.location_name:
-            location = await geocache.get("location_info")
-            if location is None:
-                logger.warning("No geo location data storing, obtaining geocoded location...")
-                location = get_location(settings.geo.location_name)
-                logger.info("Geocoded location obtained form geocoder", location=location)
-                await geocache.set("location_info", location)
-            else:
-                logger.info("Geocoded location available from cache", location=location)
-        else:
-            logger.warning("No geo_location_info provided, time variables will be unavailable.")
-            if (await time_variables.size()) > 0:
-                await time_variables.delete_all()
-                logger.warning("time_variables cache flushed")
-
-        # Setting timezone
-        tz = None
-        if location is not None:
-            loc_tz = ZoneInfo(location.timezone)
-            if settings.tz:
-                logger.warning(
-                    "Settings provides different timezone, then location. Settings value will be used.",
-                    location=loc_tz,
-                    settings=settings.tz,
-                )
-                tz = settings.tz
-            else:
-                tz = loc_tz
-                logger.warning("Using timezone from location", tz=tz)
-
-        if tz is None and settings.tz:
-            tz = settings.tz
-            logger.warning("Using timezone from 'tz' setting", tz=tz)
-
+        tz = settings.tz
         if tz is None:
             from tzlocal import get_localzone
 
             tz = get_localzone()
-            logger.warning("Timezone not provided, using local timezone", tz=tz)
+            logger.warning("Timezone not provided, using local timezone", tz=str(tz))
+        else:
+            logger.warning("Using timezone", tz=str(tz))
 
         # Running scheduler
         scheduler = Scheduler(tz=tz)
+
+        ioc = IOC()
+
+        # Define timezone
+        ioc.declare(tzinfo, tz)
+
+        # Storing hue bridge API's
+        ioc.auto_declare(bridge_v1)
+        ioc.auto_declare(bridge_v2)
+
+        # Storage reference
+        ioc.declare(IKeyValueStorage, storage)
+
+        # Scheduler
+        ioc.auto_declare(scheduler)
+
+        def event_listener():
+            logger.debug("Creating HueEventStream...")
+            listener = HueEventStreamListener(bridge_v2)
+            tasks.add(asyncio.create_task(listener.run(stop_event), name="hue_stream_listener"))
+            logger.info("HueEventStream created")
+            return listener
+
+        # If someone asks for event listener
+        ioc.declare(HueEventStreamListener, SingletonFactory(Factory(event_listener)))
+
+        # Global Stop Event
+        ioc.auto_declare(stop_event)
+
+        # keeping link for itself, because plan entries may want ioc itself as dependency
+        ioc.auto_declare(ioc)
+
+        ioc.declare(Plan, Singleton(plan))
+
+        # Applying plan
+        await Planner(ioc).apply_plan(plan)
+
         tasks.add(asyncio.create_task(scheduler.run(stop_event), name="scheduler_task"))
-
-        # Creating context
-        context = Context(
-            stop_event=stop_event,
-            hue_client_v1=bridge_v1,
-            hue_client_v2=bridge_v2,
-            scheduler=scheduler,
-            scenes=scenes_collection,
-            time_parser=TimeParser(tz, time_variables),
-        )
-
-        async def evaluate_plan(plan):
-            if location is not None:
-                for k, v in astronomical_variables_from_location(location).items():
-                    logger.info(f"Astronomical event for today: {k:<10}: {str(v)}")
-                    await time_variables.set(k, v)
-
-            await context.reset()
-            await Planner(context).apply_plan(plan)
-            logger.info("Plan evaluated. Schedule:")
-            print(scheduler, flush=True)
-
-        if settings.continuity.re_evaluate_plan:
-            logger.warning(
-                "Applying continuity modifier to the plan", re_evaluate_plan=settings.continuity.re_evaluate_plan
-            )
-            plan.append(
-                PlanEntry(
-                    trigger=PlanTriggerOnce(act_on=settings.continuity.re_evaluate_plan, alias="Evaluate plan"),
-                    action=PlanActionCallback(evaluate_plan, plan),
-                ),
-            )
-        await evaluate_plan(plan)
-
-        if settings.log.print_schedule_interval > 0:
-            logger.info("Starting periodic schedule printing", interval=f"{settings.log.print_schedule_interval}s")
-
-            async def periodic_print_schedule(stop_event, sleep):
-                while not stop_event.is_set():
-                    with suppress(asyncio.TimeoutError):
-                        await asyncio.wait_for(stop_event.wait(), sleep)
-
-                    logger.debug("Current schedule:")
-                    print(scheduler, flush=True)
-
-            tasks.add(
-                asyncio.create_task(
-                    periodic_print_schedule(stop_event, settings.log.print_schedule_interval),
-                    name="schedule_periodic_print",
-                )
-            )
-
         tasks.add(asyncio.create_task(stop_event.wait(), name="stop_event_wait"))
-        logger.info("Tasks started, waiting for termination signal.")
+
+        # Ready to serve
+        service_ready.set()
+        logger.warning("Service started, waiting for termination signal")
         await wait_tasks_shutdown()
-        await context.shutdown()
+        logger.info("Bye!")
 
 
 if __name__ == "__main__":

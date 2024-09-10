@@ -6,8 +6,9 @@ import aiohttp
 import structlog
 import yarl
 
-logger = structlog.getLogger(__name__)
 from .models import Group, Light, Scene
+
+logger = structlog.getLogger(__name__)
 
 
 class HueBridgeV1:

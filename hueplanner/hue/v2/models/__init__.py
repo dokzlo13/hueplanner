@@ -1,1 +1,1 @@
-from .event import HueEvent
+from .event import HueEvent, HueEventData

@@ -5,6 +5,7 @@ import structlog
 import yarl
 
 from .event_stream import HueEventStream
+from .models.light import LightGetResponse, LightUpdateRequest, LightUpdateResponse
 
 logger = structlog.getLogger(__name__)
 
@@ -23,6 +24,12 @@ class HueBridgeV2:
             **kwargs,
         )
 
+    @property
+    def session(self) -> aiohttp.ClientSession:
+        if self._session is None:
+            raise Exception("Not connected")
+        return self._session
+
     async def __aenter__(self):
         await self.connect()
 
@@ -38,6 +45,27 @@ class HueBridgeV2:
         if self._session:
             await self._session.close()
             self._session = None
+
+    async def get_lights(self) -> LightGetResponse:
+        resp = await self.session.get("/clip/v2/resource/light")
+        resp.raise_for_status()
+        data = await resp.json()
+        return LightGetResponse.model_validate(data)
+
+    async def get_light(self, id: str) -> LightGetResponse:
+        resp = await self.session.get(f"/clip/v2/resource/light/{id}")
+        resp.raise_for_status()
+        data = await resp.json()
+        return LightGetResponse.model_validate(data)
+
+    async def update_light(self, id: str, update: LightUpdateRequest) -> LightUpdateResponse:
+        resp = await self.session.put(
+            f"/clip/v2/resource/light/{id}",
+            json=update.model_dump(exclude_none=True),
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        return LightUpdateResponse.model_validate(data)
 
     def event_stream(self) -> HueEventStream:
         return HueEventStream(
