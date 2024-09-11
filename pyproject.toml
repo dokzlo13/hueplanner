@@ -20,8 +20,8 @@ pyyaml = "^6.0.1"
 pydantic-settings = "^2.2.1"
 tzlocal = "^5.2"
 jq = "^1.8.0"
-pytimeparse = "^1.1.8"
 pyaml-env = "^1.2.1"
+pytimeparse2 = "^1.7.1"
 
 [tool.poetry.dev-dependencies]
 pytest = "^8.3.3"

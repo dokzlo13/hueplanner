@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import random
-from abc import abstractmethod
 from contextlib import suppress
 from datetime import datetime, time, timedelta, tzinfo
 from functools import total_ordering
-from typing import Awaitable, Callable, Protocol, runtime_checkable
+from typing import Awaitable, Callable, Protocol
 
 import structlog
 
@@ -372,7 +370,7 @@ class SchedulerTask:
                 continue
 
             stop_task = asyncio.create_task(stop_event.wait())
-            wrapped_task = asyncio.create_task(self.coro())
+            wrapped_task = asyncio.create_task(self.coro())  # type: ignore
 
             done, pending = await asyncio.wait([stop_task, wrapped_task], return_when=asyncio.FIRST_COMPLETED)
             for task in pending:

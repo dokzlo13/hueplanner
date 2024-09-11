@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, tzinfo
 from typing import Annotated, Protocol
 
-import pytimeparse
+import pytimeparse2 as pytimeparse
 import structlog
 from pydantic import BaseModel
 from pydantic.functional_validators import BeforeValidator
