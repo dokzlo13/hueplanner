@@ -141,7 +141,7 @@ class PlanActionPopulateGeoVariables(PlanAction, Serializable):
     location_name: str | None
     lat: float | None
     lng: float | None
-    set_timezone: bool
+    set_timezone: bool = False
 
     class _Model(BaseModel):
         variables_db: str = "geo_variables"

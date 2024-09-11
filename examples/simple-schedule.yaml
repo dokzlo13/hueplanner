@@ -1,0 +1,74 @@
+settings:
+  tz: ${TZ}
+  log:
+    level: ${LOG_LEVEL:info}
+    colors: ${LOG_COLORS:false}
+  database:
+    path: ${DB_PATH}
+  hue_bridge:
+    addr: ${HUE_BRIDGE_ADDRESS}
+    username: ${HUE_BRIDGE_USERNAME}
+
+plan:
+  # Button handler - toggles lights on/off for the scene
+  - trigger:
+      type: OnHueButtonEvent
+      args:
+        action: "short_release"
+        resource_id: ${BUTTON_ID:1e53050b-ca07-44f3-977f-ab0477e5e911}
+    action:
+      type: ToggleStoredScene
+      args:
+        db_key: "my_scene"
+
+  # Time schedule
+  - trigger:
+      type: Daily
+      args:
+        time: "07:00"
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Energize"
+        # group: "123" # You can optionally provide group for this action. If not provided, first scene with this name will be stored
+        db_key: "my_scene"
+
+  - trigger:
+      type: Daily
+      args:
+        time: "12:00"
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Concentrate"
+        db_key: "my_scene"
+
+  - trigger:
+      type: Daily
+      args:
+        time: "19:00"
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Read"
+        db_key: "my_scene"
+
+  - trigger:
+      type: Daily
+      args:
+        time: "21:00"
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Relax"
+        db_key: "my_scene"
+
+  - trigger:
+      type: Daily
+      args:
+        time: "23:00"
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Rest"
+        db_key: "my_scene"

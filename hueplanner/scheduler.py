@@ -548,40 +548,15 @@ class Scheduler:
     def get_schedule(self) -> tuple[SchedulerTask, ...]:
         return tuple(sorted(self._tasks.values(), key=lambda t: t.schedule))
 
-    # def next_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
-
-    #     available_tasks = [t for t in self._tasks.values() if t.schedule.next(pivot) is not None]
-    #     tasks = sorted(available_tasks, key=lambda t: t.schedule.next(pivot))  # type: ignore
-    #     for task in tasks:
-    #         if tags is None:
-    #             return task
-    #         # Check if the task's tags match
-    #         if len(task.tags) and task.tags.issubset(tags):
-    #             return task
-
-    #     return None
-
-    # def prev_closest_task(self, pivot: datetime | None = None, tags: set[str] | None = None) -> SchedulerTask | None:
-    #     # Sort tasks based on the previous run time (using prev()), handling None cases
-    #     available_tasks = [t for t in self._tasks.values() if t.schedule.prev(pivot) is not None]
-    #     tasks = sorted(available_tasks, key=lambda t: t.schedule.prev(pivot), reverse=True)  # type: ignore
-    #     for task in tasks:
-    #         if tags is None:
-    #             return task
-    #         # Check if the task's tags match
-    #         if len(task.tags) and task.tags.issubset(tags):
-    #             return task
-    #     return None
-
     def __str__(self) -> str:
         if not self._tasks:
             return "EMPTY SCHEDULE"
 
-        # Determine the maximum length for the "Alias" field, with a minimum of 5 and a maximum of 20
-        max_alias_length = min(max(5, max(len(task.alias) for task in self._tasks.values())), 20)
+        # Determine the maximum length for the "Alias" field, with a minimum of 5 and a maximum of 60
+        max_alias_length = min(max(5, max(len(task.alias) for task in self._tasks.values())), 60)
 
-        # Determine the maximum length for the "Tags" field, with a minimum of the length of "Tags" (4) and a maximum of 20
-        max_tags_length = max(4, min(20, max(len(",".join(task.tags)) for task in self._tasks.values())))
+        # Determine the maximum length for the "Tags" field, with a minimum of the length of "Tags" (4) and a maximum of 40
+        max_tags_length = max(4, min(40, max(len(",".join(task.tags)) for task in self._tasks.values())))
 
         # Define column alignments, widths, and names
         c_align = ("^", "<", ">", ">", ">", ">")

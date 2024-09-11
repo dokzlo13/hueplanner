@@ -55,7 +55,7 @@ class HueEventStreamListener:
 
             try:
                 async with event_stream as events:
-                    logger.info("HUE event stream connected")
+                    logger.warning("HueEventStream connected")
                     # Reset the retry counter on successful connection
                     retry_counter = 0
                     async for event in events:

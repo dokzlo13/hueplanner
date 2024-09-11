@@ -1,0 +1,147 @@
+settings:
+  tz: ${TZ}
+  log:
+    level: ${LOG_LEVEL:info}
+    colors: ${LOG_COLORS:false}
+  database:
+    path: ${DB_PATH}
+  hue_bridge:
+    addr: ${HUE_BRIDGE_ADDRESS}
+    username: ${HUE_BRIDGE_USERNAME}
+
+plan:
+  # This task will remove all scheduled task and evaluate this plan again.
+  # This is done to execute "PopulateGeoVariables" for new day and then reschedule other schedule-based tasks
+  - trigger:
+      type: Once
+      args:
+        time: "01:00"
+        alias: "Plan Evaluation"
+        shift_if_late: true
+    action:
+      type: ReEvaluatePlan
+      args:
+        # We should remove all scheduled tasks to create new
+        reset_schedule: true
+        # because we have event listeners and they will be added again during this plan evaluation, we should terminate existing one
+        reset_event_listeners: True
+
+  # Done some preparation jobs just while plan evaluating
+  - trigger:
+      type: Immediately
+    action:
+      type: Sequence
+      args:
+        # Reset database with scenes on new plan evaluation
+        - type: FlushDb
+          args:
+            target_db: "stored_scenes"
+        # Populate geo variables based on location
+        - type: PopulateGeoVariables
+          args:
+            location_name: ${LOCATION_NAME}
+            variables_db: "geo_variables"
+            cache_db: "geo_cache"  # on next run will not resolve your location wit geocoder, but take it from cache.
+
+  # Just printing current schedule every 30m
+  - trigger:
+      type: Periodic
+      args:
+        interval: "30m"
+        alias: "print schedule"
+        start_at: "@now+1s"
+    action:
+      type: PrintSchedule
+
+  # Run some closest schedule to set fallback scene. 
+  # If no scene saved in app's memory when you press the button - you can't turn lights on/off.
+  - trigger:
+      type: Once
+      args:
+        time: "@now + 5s"
+        alias: "Scene Fallback"
+    action:
+      type: RunClosestSchedule
+      args:
+        scheduler_tags: ["scene_set"]  # filters scheduler tasks to run only scene set tasks
+        strategy: PREV_NEXT  # Try to run previous task first, if nothing found - next task
+        allow_overlap: True  # Allow to overlap to previous/next day in schedule to find the task
+
+  # Button handler - toggles lights on/off for the scene
+  - trigger:
+      type: OnHueButtonEvent
+      args:
+        action: "short_release"
+        resource_id: "1e53050b-ca07-44f3-977f-ab0477e5e911"
+    action:
+      type: ToggleStoredScene
+      args:
+        target_db: "stored_scenes"  # explicitly defining db for verbosity
+        db_key: "living_room_scene"
+
+  # Configuring light schedule
+  - trigger:
+      type: Once
+      args:
+        time: "@dawn"
+        scheduler_tag: "scene_set"
+        variables_db: ["geo_variables"]
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Energize"
+        # group: "123" # You can optionally provide group for this action. If not provided, first scene with this name will be stored
+        target_db: "stored_scenes"  # explicitly defining db for verbosity
+        db_key: "living_room_scene"
+
+  - trigger:
+      type: Once
+      args:
+        time: "@noon"
+        scheduler_tag: "scene_set"
+        variables_db: ["geo_variables"]
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Concentrate"
+        target_db: "stored_scenes"
+        db_key: "living_room_scene"
+
+  - trigger:
+      type: Once
+      args:
+        time: "@sunset - 30 min"  # little bit adjusted time for sunset
+        scheduler_tag: "scene_set"
+        variables_db: ["geo_variables"]
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Read"
+        target_db: "stored_scenes"
+        db_key: "living_room_scene"
+
+  - trigger:
+      type: Once
+      args:
+        time: "@dusk"
+        scheduler_tag: "scene_set"
+        variables_db: ["geo_variables"]
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Relax"
+        target_db: "stored_scenes"
+        db_key: "living_room_scene"
+
+  - trigger:
+      type: Once
+      args:
+        time: "@midnight"
+        scheduler_tag: "scene_set"
+        variables_db: ["geo_variables"]
+    action:
+      type: StoreSceneByName
+      args:
+        name: "Rest"
+        target_db: "stored_scenes"
+        db_key: "living_room_scene"

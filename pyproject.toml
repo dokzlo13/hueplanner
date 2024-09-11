@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hueplanner"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = ["Alex Zakharov <dokzlo13@gmail.com>"]
 
@@ -24,7 +24,7 @@ pytimeparse = "^1.1.8"
 pyaml-env = "^1.2.1"
 
 [tool.poetry.dev-dependencies]
-pytest = "^8.3.2"
+pytest = "^8.3.3"
 pytest-asyncio = "^0.24.0"
 black = "^24.8.0"
 isort = "^5.10.1"

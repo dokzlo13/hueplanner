@@ -44,7 +44,7 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
         for variables_db in self.variables_db:
             variables_collections.append(await storage.create_collection(variables_db))
 
-        alias = self.alias if self.alias is not None else f"task:'{str(self.time)}'"
+        alias = self.alias if self.alias is not None else f"{self.time}"
         act_on_time = (await TimeParser(tz, variables_collections).parse(self.time)).timetz()
 
         task = scheduler.once(
@@ -79,50 +79,71 @@ class PlanTriggerPeriodic(PlanTrigger, Serializable):
         if self.start_at:
             start_at = (await TimeParser(tz, variables_collections).parse(self.start_at)).timetz()
 
-        task = scheduler.periodic(action, interval=self.interval, start_at=start_at, alias=self.alias)
+        alias = (
+            self.alias
+            if self.alias is not None
+            else (
+                f"each {self.interval} since "
+                f"{self.start_at if self.start_at else start_at.isoformat(timespec='seconds')}"
+            )
+        )
+        task = scheduler.periodic(action, interval=self.interval, start_at=start_at, alias=alias)
         logger.info("Periodic trigger added to schedule", schedule=task.schedule, action=action)
 
 
 @dataclass(kw_only=True)
 class _PlanTriggerConvenientPeriodic(PlanTrigger, Serializable, Protocol):
-    time: str
     alias: str | None = None
     scheduler_tag: str | None = None
+
+    class _Model(BaseModel):
+        alias: str | None = None
+        scheduler_tag: str | None = None
+
+    async def _calculate_params(self, storage: IKeyValueStorage, tz: tzinfo) -> tuple[time, timedelta]: ...
+
+    async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
+
+        start_at, interval = await self._calculate_params(storage, tz)
+        alias = (
+            self.alias if self.alias is not None else f"each {interval} since {start_at.isoformat(timespec='seconds')}"
+        )
+
+        task = scheduler.periodic(action, interval=interval, start_at=start_at, alias=alias)
+        logger.info("Periodic trigger added to schedule", schedule=task.schedule, action=action)
+
+
+@dataclass(kw_only=True)
+class PlanTriggerDaily(_PlanTriggerConvenientPeriodic):
+    time: str | None = None
     variables_db: list[str] = field(default_factory=list)
 
     class _Model(BaseModel):
-        time: str
+        time: str | None = None
         alias: str | None = None
         scheduler_tag: str | None = None
         variables_db: list[str] = []
 
-    def _get_interval(self) -> timedelta: ...
+    async def _calculate_params(self, storage: IKeyValueStorage, tz: tzinfo) -> tuple[time, timedelta]:
+        if self.time is None:
+            return (datetime.now(tz) + timedelta(days=1)).time(), timedelta(days=1)
 
-    async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
         variables_collections = []
         for variables_db in self.variables_db:
             variables_collections.append(await storage.create_collection(variables_db))
 
         start_at = (await TimeParser(tz, variables_collections).parse(self.time)).timetz()
-        interval = self._get_interval()
 
-        task = scheduler.periodic(action, interval=interval, start_at=start_at, alias=self.alias)
-        logger.info("Periodic trigger added to schedule", schedule=task.schedule, action=action)
-
-
-@dataclass(kw_only=True)
-class PlanTriggerHourly(_PlanTriggerConvenientPeriodic):
-    def _get_interval(self) -> timedelta:
-        return timedelta(hours=1)
+        return start_at, timedelta(days=1)
 
 
 @dataclass(kw_only=True)
 class PlanTriggerMinutely(_PlanTriggerConvenientPeriodic):
-    def _get_interval(self) -> timedelta:
-        return timedelta(minutes=1)
+    async def _calculate_params(self, storage: IKeyValueStorage, tz: tzinfo) -> tuple[time, timedelta]:
+        return (datetime.now(tz) + timedelta(minutes=1)).time(), timedelta(minutes=1)
 
 
 @dataclass(kw_only=True)
-class PlanTriggerDaily(_PlanTriggerConvenientPeriodic):
-    def _get_interval(self) -> timedelta:
-        return timedelta(days=1)
+class PlanTriggerHourly(_PlanTriggerConvenientPeriodic):
+    async def _calculate_params(self, storage: IKeyValueStorage, tz: tzinfo) -> tuple[time, timedelta]:
+        return (datetime.now(tz) + timedelta(hours=1)).time(), timedelta(hours=1)

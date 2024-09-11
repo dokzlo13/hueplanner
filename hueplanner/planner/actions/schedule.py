@@ -22,33 +22,45 @@ class ClosestScheduleRunStrategy(Enum):
 
 
 def get_closest_prev(tasks: tuple[SchedulerTask, ...], overlap: bool) -> SchedulerTask | None:
+    # Initially try to find tasks with valid `prev()` values
     valid_tasks = [task for task in tasks if task.schedule.prev() is not None]
+    using_prev = True  # Flag to indicate if we're using `prev()`
 
     if not valid_tasks and overlap:
-        # If no valid tasks and overlap is allowed, consider all tasks
-        valid_tasks = [task for task in tasks]
+        # If no valid previous tasks and overlap is allowed, try using `next()` instead
+        valid_tasks = [task for task in tasks if task.schedule.next() is not None]
+        using_prev = False  # We are now using `next()` values
 
     if not valid_tasks:
         return None
 
-    # Sort by the `prev()` datetime (most recent to least recent)
-    valid_tasks.sort(key=lambda t: t.schedule.prev(), reverse=True)
+    # Sort depending on whether we are using `prev()` or `next()`
+    if using_prev:
+        valid_tasks.sort(key=lambda t: t.schedule.prev(), reverse=True)  # Sort by `prev()` (most recent first)
+    else:
+        valid_tasks.sort(key=lambda t: t.schedule.next())  # Sort by `next()` (soonest first)
 
     return valid_tasks[0] if valid_tasks else None
 
 
 def get_closest_next(tasks: tuple[SchedulerTask, ...], overlap: bool) -> SchedulerTask | None:
+    # Initially try to find tasks with valid `next()` values
     valid_tasks = [task for task in tasks if task.schedule.next() is not None]
+    using_next = True  # Flag to indicate if we're using `next()`
 
     if not valid_tasks and overlap:
-        # If no valid tasks and overlap is allowed, consider all tasks
-        valid_tasks = [task for task in tasks]
+        # If no valid next tasks and overlap is allowed, try using `prev()` instead
+        valid_tasks = [task for task in tasks if task.schedule.prev() is not None]
+        using_next = False  # We are now using `prev()` values
 
     if not valid_tasks:
         return None
 
-    # Sort by the `next()` datetime (soonest to latest)
-    valid_tasks.sort(key=lambda t: t.schedule.next())
+    # Sort depending on whether we are using `next()` or `prev()`
+    if using_next:
+        valid_tasks.sort(key=lambda t: t.schedule.next())  # Sort by `next()` (soonest first)
+    else:
+        valid_tasks.sort(key=lambda t: t.schedule.prev(), reverse=True)  # Sort by `prev()` (most recent first)
 
     return valid_tasks[0] if valid_tasks else None
 
