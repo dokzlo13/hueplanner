@@ -8,6 +8,8 @@ from typing import Awaitable, Callable, Protocol
 
 import structlog
 
+from hueplanner.wrappers import ReliableWrapper, TimeoutWrapper, Wrapper
+
 # Setup structlog for structured logging
 logger = structlog.getLogger(__name__)
 
@@ -20,117 +22,6 @@ def str_cutoff(text: str, max_width: int | None = None) -> str:
     if max_width is None:
         return text
     return text if len(text) <= max_width else text[: max_width - 3] + "..."
-
-
-# @runtime_checkable
-# class Wrapper(Protocol):
-#     @abstractmethod
-#     async def execute(self, *args, **kwargs):
-#         pass
-
-#     def __call__(self, *args, **kwargs) -> Awaitable[None]:
-#         return self.execute(*args, **kwargs)
-
-#     def get_task_name(self):
-#         # Recursively get the name or repr of the task being executed
-#         func = getattr(self, "func", None)
-#         if isinstance(func, Wrapper):
-#             return repr(func)
-#         elif hasattr(func, "__name__"):
-#             return f"<{func.__name__}>"  # Return the function name if available
-#         else:
-#             return repr(func)  # Fallback to repr for other callable objects
-
-#     def __repr__(self):
-#         # Return a simple class name representation if no specific function is wrapped
-#         return f"{self.__class__.__name__}({self.get_task_name()})"
-
-
-# class ReliableWrapper(Wrapper):
-#     def __init__(
-#         self, func: Callable[..., Awaitable[None]], max_retries=3, base_backoff=1, handle_exceptions=(Exception,)
-#     ):
-#         self.func = func
-#         self.max_retries = max_retries
-#         self.base_backoff = base_backoff
-#         self.handle_exceptions = handle_exceptions
-
-#     async def execute(self, *args, **kwargs):
-#         log = logger.bind(task=repr(self.func))
-#         attempt = 0
-#         while attempt < self.max_retries:
-#             try:
-#                 # log.debug("Starting task with retries", attempt=attempt + 1, max_retries=self.max_retries)
-#                 # Execute the function with provided args and kwargs
-#                 result = await self.func(*args, **kwargs)
-#                 # log.debug("Task completed successfully", attempt=attempt + 1)
-#                 return result
-#             except self.handle_exceptions as e:
-#                 attempt += 1
-#                 log.exception("Task raised an exception, retrying", attempt=attempt, exception=str(e))
-#                 backoff = self._get_backoff_time(attempt)
-#                 if attempt >= self.max_retries:
-#                     log.error("Max retries reached, task failed", attempt=attempt)
-#                     break
-#                 log.info("Retrying after backoff", attempt=attempt, backoff=round(backoff, 3))
-#                 await asyncio.sleep(backoff)
-#         log.error("Task failed after all retries")
-#         return None
-
-#     def _get_backoff_time(self, attempt):
-#         backoff = self.base_backoff * (2 ** (attempt - 1))
-#         jitter = random.uniform(0, backoff * 0.1)
-#         return backoff + jitter
-
-
-# class TimeoutWrapper(Wrapper):
-#     def __init__(self, func: Callable[..., Awaitable[None]], run_until: datetime, tz: tzinfo | None = None):
-#         self.func = func
-#         self.run_until = run_until
-#         self.tz = tz
-
-#     async def execute(self, *args, **kwargs):
-#         log = logger.bind(task=repr(self.func))
-#         time_left = (self.run_until - datetime.now(self.tz)).total_seconds()
-#         if time_left <= 0:
-#             log.warning("Task cancelled due to run_until time exceeded")
-#             return None  # Task cancelled silently
-#         try:
-#             # log.debug("Starting task with timeout", timeout=time_left)
-#             return await asyncio.wait_for(self.func(*args, **kwargs), timeout=time_left)
-#         except asyncio.TimeoutError:
-#             log.warning("Task timed out and was cancelled")
-#             return None  # Silent cancellation
-
-
-# class StopCancellationWrapper(Wrapper):
-#     def __init__(self, func: Callable[..., Awaitable[None]], stop_event: asyncio.Event):
-#         self.func = func
-#         self.stop_event = stop_event
-
-#     async def execute(self, *args, **kwargs):
-#         log = logger.bind(task=repr(self.func))
-
-#         # log.debug("Starting task with stop event cancellation", stop_event=self.stop_event)
-
-#         stop_task = asyncio.create_task(self.stop_event.wait())
-#         wrapped_task = asyncio.create_task(self.func(*args, **kwargs))
-
-#         done, pending = await asyncio.wait([stop_task, wrapped_task], return_when=asyncio.FIRST_COMPLETED)
-
-#         if stop_task in done:
-#             log.warning("Task cancelled due to stop_event trigger")
-#             wrapped_task.cancel()
-#             try:
-#                 await wrapped_task  # Ensure is cancelled
-#                 return
-#             except asyncio.CancelledError:
-#                 log.error("Wrapped task was cancelled")
-#                 return None
-
-#         # if wrapped_task not in done:
-#         # log.debug("Task was cancelled")
-#         return await wrapped_task if wrapped_task in done else None
 
 
 @total_ordering
@@ -354,23 +245,46 @@ class SchedulerTask:
         )
 
     async def run(self, stop_event: asyncio.Event):
+        next_run = None
+        fetch_next_time = True
+
         while not stop_event.is_set():
-            next_run = self.schedule.next()
+            if fetch_next_time:
+                next_run = self.schedule.next()
+            fetch_next_time = True
+
             if not next_run:
                 logger.debug("No next runs for task", task=self)
                 break
 
-            seconds_until_next_run = (next_run - datetime.now(self.tz) + timedelta(milliseconds=1)).total_seconds()
+            seconds_until_next_run = max(
+                (next_run - datetime.now(self.tz) + timedelta(milliseconds=1)).total_seconds(), 0
+            )
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=seconds_until_next_run)
                 return
 
             if datetime.now(self.tz) < next_run:
                 logger.warning("Some task execution time drifting happens, please adjust your schedule")  # wat?
+                fetch_next_time = False
                 continue
 
+            # Wrapped like so, coro will never raise error, except canceled error
+            wrapped: Wrapper = ReliableWrapper(
+                self.coro,
+                max_retries=3,
+                silence_exceptions=(Exception,),
+                always_raise_exceptions=(asyncio.CancelledError,),  # type: ignore
+            )
+            if next_next := self.schedule.next():
+                # TODO: estimate avg execution time for task and use it as delta in run_until
+                wrapped = TimeoutWrapper(wrapped, run_until=next_next - timedelta(milliseconds=10), tz=self.tz)
+
+            # wrapped = StopCancellationWrapper(wrapped, stop_event=stop_event)
+            # return await self.coro()
+
             stop_task = asyncio.create_task(stop_event.wait())
-            wrapped_task = asyncio.create_task(self.coro())  # type: ignore
+            wrapped_task = asyncio.create_task(wrapped())  # type: ignore
 
             done, pending = await asyncio.wait([stop_task, wrapped_task], return_when=asyncio.FIRST_COMPLETED)
             for task in pending:

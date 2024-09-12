@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, tzinfo
 
-import pytimeparse
+import pytimeparse2 as pytimeparse
 
 from hueplanner.storage.interface import IKeyValueCollection
 
