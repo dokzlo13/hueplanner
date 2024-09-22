@@ -1,15 +1,12 @@
 from typing import Any, Protocol
 
-from pydantic import BaseModel
+from pydantic import TypeAdapter
 
 
 class Serializable(Protocol):
-    class _Model(BaseModel):
-        pass
-
     @classmethod
     def loads(cls, data: dict[str, Any]):
-        return cls(**cls._Model.model_validate(data).model_dump())  # type: ignore
+        return TypeAdapter(cls).validate_python(data)
 
     def dumps(self) -> dict[str, Any]:
-        return self._Model.model_validate(self, from_attributes=True).model_dump()
+        return TypeAdapter(self.__class__).dump_python(self)

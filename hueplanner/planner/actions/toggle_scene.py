@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import structlog
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 
 from hueplanner.hue.v1 import HueBridgeV1
 from hueplanner.planner.serializable import Serializable
-from hueplanner.scheduler import Scheduler
 from hueplanner.storage.interface import IKeyValueStorage
 
 from .interface import EvaluatedAction, PlanAction
@@ -18,10 +15,7 @@ logger = structlog.getLogger(__name__)
 @dataclass(kw_only=True)
 class PlanActionToggleStoredScene(PlanAction, Serializable):
     db_key: str
-    target_db: str = "stored_scenes"
-
-    class _Model(BaseModel):
-        db_key: str
+    db: str = "stored_scenes"
 
     async def define_action(
         self,
@@ -31,7 +25,7 @@ class PlanActionToggleStoredScene(PlanAction, Serializable):
         async def toggle_current_scene():
             logger.info("Scene toggling requested", action=repr(self))
 
-            scenes = await storage.create_collection(self.target_db)
+            scenes = await storage.create_collection(self.db)
             scene = await scenes.get(self.db_key)
             if not scene:
                 logger.warning("Can't toggle scene, because it was not set yet")

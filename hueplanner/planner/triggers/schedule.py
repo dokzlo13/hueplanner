@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import datetime, time, timedelta, tzinfo
 from typing import Annotated, Protocol
 
 import pytimeparse2 as pytimeparse
 import structlog
-from pydantic import BaseModel
-from pydantic.functional_validators import BeforeValidator
+from pydantic import BeforeValidator
+from pydantic.dataclasses import dataclass
 
 from hueplanner.planner.actions import EvaluatedAction
 from hueplanner.planner.serializable import Serializable
@@ -32,13 +32,6 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
     variables_db: list[str] = field(default_factory=list)
     shift_if_late: bool = False
 
-    class _Model(BaseModel):
-        time: str
-        alias: str | None = None
-        scheduler_tag: str | None = None
-        variables_db: list[str] = []
-        shift_if_late: bool = False
-
     async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
         variables_collections = []
         for variables_db in self.variables_db:
@@ -59,16 +52,10 @@ class PlanTriggerOnce(PlanTrigger, Serializable):
 
 @dataclass
 class PlanTriggerPeriodic(PlanTrigger, Serializable):
-    interval: timedelta
+    interval: Annotated[timedelta, BeforeValidator(parse_timedelta)]
     start_at: str | None = None
     alias: str | None = None
     variables_db: list[str] = field(default_factory=list)
-
-    class _Model(BaseModel):
-        interval: Annotated[timedelta, BeforeValidator(parse_timedelta)]
-        start_at: str | None = None
-        alias: str | None = None
-        variables_db: list[str] = []
 
     async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
         variables_collections = []
@@ -96,10 +83,6 @@ class _PlanTriggerConvenientPeriodic(PlanTrigger, Serializable, Protocol):
     alias: str | None = None
     scheduler_tag: str | None = None
 
-    class _Model(BaseModel):
-        alias: str | None = None
-        scheduler_tag: str | None = None
-
     async def _calculate_params(self, storage: IKeyValueStorage, tz: tzinfo) -> tuple[time, timedelta]: ...
 
     async def apply_trigger(self, action: EvaluatedAction, scheduler: Scheduler, storage: IKeyValueStorage, tz: tzinfo):
@@ -117,12 +100,6 @@ class _PlanTriggerConvenientPeriodic(PlanTrigger, Serializable, Protocol):
 class PlanTriggerDaily(_PlanTriggerConvenientPeriodic):
     time: str | None = None
     variables_db: list[str] = field(default_factory=list)
-
-    class _Model(BaseModel):
-        time: str | None = None
-        alias: str | None = None
-        scheduler_tag: str | None = None
-        variables_db: list[str] = []
 
     async def _calculate_params(self, storage: IKeyValueStorage, tz: tzinfo) -> tuple[time, timedelta]:
         if self.time is None:

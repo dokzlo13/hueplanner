@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import structlog
+from pydantic.dataclasses import dataclass
 
 from hueplanner.planner.actions import EvaluatedAction
 from hueplanner.planner.serializable import Serializable

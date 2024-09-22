@@ -157,7 +157,7 @@ settings:
   database:
    # path to sqlite database. If not provided, app will run in memory-only mode.
     path: ./hueplanner.sqlite
-  # Exposes http://0.0.0.0:9090/healt/live and http://0.0.0.0:9090/healt/ready for health probes
+  # Exposes http://0.0.0.0:9090/health/live and http://0.0.0.0:9090/health/ready for health probes
   healthcheck:   # If this section not provided, healthcheck will be disabled
     host: 0.0.0.0
     port: 9090

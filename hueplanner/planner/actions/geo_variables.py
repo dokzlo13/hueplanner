@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, time, timedelta, tzinfo
 from typing import Any, Callable
 
@@ -10,7 +9,7 @@ import zoneinfo
 from astral.location import Location
 from astral.sun import Observer, dawn, dusk, midnight, noon, sunrise, sunset
 from geopy.geocoders import Nominatim
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 from timezonefinder import TimezoneFinder
 
 from hueplanner.ioc import IOC
@@ -136,20 +135,12 @@ def astronomical_variables_from_location(location: Location, now: datetime | Non
 
 @dataclass(kw_only=True)
 class PlanActionPopulateGeoVariables(PlanAction, Serializable):
-    variables_db: str
-    cache_db: str | None
-    location_name: str | None
-    lat: float | None
-    lng: float | None
+    variables_db: str = "geo_variables"
+    cache_db: str | None = None
+    location_name: str | None = None
+    lat: float | None = None
+    lng: float | None = None
     set_timezone: bool = False
-
-    class _Model(BaseModel):
-        variables_db: str = "geo_variables"
-        cache_db: str | None = None
-        location_name: str | None = None
-        lat: float | None = None
-        lng: float | None = None
-        set_timezone: bool = False
 
     async def define_action(self, storage: IKeyValueStorage, ioc: IOC) -> EvaluatedAction:
         logger.warning("Preparing geo-location for astronomical events calculation")

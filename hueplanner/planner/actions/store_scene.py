@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 
 from hueplanner.hue.v1 import HueBridgeV1
 from hueplanner.hue.v1.models import Scene
@@ -19,11 +18,11 @@ logger = structlog.getLogger(__name__)
 @dataclass(kw_only=True)
 class PlanActionStoreScene(PlanAction, Protocol):
     db_key: str
-    target_db: str = "stored_scenes"
+    db: str = "stored_scenes"
     activate: bool = True
 
     async def define_action(self, hue_v1: HueBridgeV1, storage: IKeyValueStorage) -> EvaluatedAction:
-        scenes = await storage.create_collection(self.target_db)
+        scenes = await storage.create_collection(self.db)
 
         required_scene = None
         for scene in await hue_v1.get_scenes():
@@ -59,12 +58,6 @@ class PlanActionStoreSceneByName(PlanActionStoreScene, Serializable):
     name: str
     group: int | None = None
 
-    class _Model(BaseModel):
-        name: str
-        db_key: str
-        target_db: str = "stored_scenes"
-        group: int | None = None
-
     def match_scene(self, scene: Scene) -> bool:
         if scene.name == self.name:
             if not self.group:
@@ -77,11 +70,6 @@ class PlanActionStoreSceneByName(PlanActionStoreScene, Serializable):
 @dataclass(kw_only=True)
 class PlanActionStoreSceneById(PlanActionStoreScene, Serializable):
     id: str
-
-    class _Model(BaseModel):
-        id: str
-        db_key: str
-        target_db: str = "stored_scenes"
 
     def match_scene(self, scene: Scene) -> bool:
         return scene.id == self.id

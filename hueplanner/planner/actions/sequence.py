@@ -8,7 +8,7 @@ logger = structlog.getLogger(__name__)
 
 
 class PlanActionSequence(PlanAction):
-    def __init__(self, *actions) -> None:
+    def __init__(self, *actions: tuple[PlanAction, ...]) -> None:
         super().__init__()
         self._actions: tuple[PlanAction, ...] = tuple(item for a in actions for item in self._unpack_nested_sequence(a))
 

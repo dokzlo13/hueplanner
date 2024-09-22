@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from aiohttp import client_exceptions
 import structlog
-from pydantic import BaseModel
+from aiohttp import client_exceptions
+from pydantic.dataclasses import dataclass
 
-from hueplanner.hue.v1 import HueBridgeV1
 from hueplanner.hue.v2 import HueBridgeV2
 from hueplanner.hue.v2.models.light import LightUpdateRequest
-
 from hueplanner.planner.serializable import Serializable
-from hueplanner.scheduler import Scheduler
-from hueplanner.storage.interface import IKeyValueStorage
 
 from .interface import EvaluatedAction, PlanAction
 
@@ -23,14 +17,6 @@ logger = structlog.getLogger(__name__)
 class PlanActionUpdateLightV2(PlanAction, Serializable):
     id: str
     update: LightUpdateRequest
-
-    class _Model(BaseModel):
-        id: str
-        update: LightUpdateRequest
-
-    def __post_init__(self):
-        # TODO: serializable should pass correct type without this hack (currently passes dict)
-        self.update = LightUpdateRequest.model_validate(self.update)
 
     async def define_action(self) -> EvaluatedAction:
         async def update_light(hue_v2: HueBridgeV2):

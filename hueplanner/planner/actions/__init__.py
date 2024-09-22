@@ -1,8 +1,5 @@
 from .callback import PlanActionCallback
-from .conditions import (
-    PlanActionWithEvaluationCondition,
-    PlanActionWithRuntimeCondition,
-)
+from .conditions import PlanActionRunIf
 from .debug import PlanActionPrintSchedule
 from .geo_variables import PlanActionPopulateGeoVariables
 from .interface import EvaluatedAction, PlanAction

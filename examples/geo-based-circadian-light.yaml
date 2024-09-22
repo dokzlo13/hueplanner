@@ -35,7 +35,7 @@ plan:
         # Reset database with scenes on new plan evaluation
         - type: FlushDb
           args:
-            target_db: "stored_scenes"
+            db: "stored_scenes"
         # Populate geo variables based on location
         - type: PopulateGeoVariables
           args:
@@ -76,7 +76,7 @@ plan:
     action:
       type: ToggleStoredScene
       args:
-        target_db: "stored_scenes"  # explicitly defining db for verbosity
+        db: "stored_scenes"  # explicitly defining db for verbosity
         db_key: "living_room_scene"
 
   # Configuring light schedule
@@ -91,7 +91,7 @@ plan:
       args:
         name: "Energize"
         # group: "123" # You can optionally provide group for this action. If not provided, first scene with this name will be stored
-        target_db: "stored_scenes"  # explicitly defining db for verbosity
+        db: "stored_scenes"  # explicitly defining db for verbosity
         db_key: "living_room_scene"
 
   - trigger:
@@ -104,7 +104,7 @@ plan:
       type: StoreSceneByName
       args:
         name: "Concentrate"
-        target_db: "stored_scenes"
+        db: "stored_scenes"
         db_key: "living_room_scene"
 
   - trigger:
@@ -117,7 +117,7 @@ plan:
       type: StoreSceneByName
       args:
         name: "Read"
-        target_db: "stored_scenes"
+        db: "stored_scenes"
         db_key: "living_room_scene"
 
   - trigger:
@@ -130,7 +130,7 @@ plan:
       type: StoreSceneByName
       args:
         name: "Relax"
-        target_db: "stored_scenes"
+        db: "stored_scenes"
         db_key: "living_room_scene"
 
   - trigger:
@@ -143,5 +143,5 @@ plan:
       type: StoreSceneByName
       args:
         name: "Rest"
-        target_db: "stored_scenes"
+        db: "stored_scenes"
         db_key: "living_room_scene"

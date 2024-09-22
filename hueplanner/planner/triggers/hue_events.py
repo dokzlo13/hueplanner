@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 
 from hueplanner.event_listener import HueEventStreamListener
 from hueplanner.hue.v2.models import HueEvent
@@ -16,7 +15,6 @@ from .interface import PlanTrigger
 logger = structlog.getLogger(__name__)
 
 
-@dataclass
 class PlanTriggerOnHueEvent(PlanTrigger, Protocol):
     async def apply_trigger(self, action: EvaluatedAction, stream_listener: HueEventStreamListener):
         async def cb_action(_: HueEvent) -> None:
@@ -33,10 +31,6 @@ class PlanTriggerOnHueEvent(PlanTrigger, Protocol):
 class PlanTriggerOnHueButtonEvent(PlanTriggerOnHueEvent, Serializable):
     resource_id: str
     action: str
-
-    class _Model(BaseModel):
-        resource_id: str
-        action: str
 
     def __post_init__(self):
         if self.resource_id == "" or self.action == "":

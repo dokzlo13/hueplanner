@@ -64,26 +64,11 @@ class ScheduleEntry(Protocol):
 class ScheduleOnce(ScheduleEntry):
     def __init__(
         self,
-        run_at: time,
+        run_at: datetime,
         tz: tzinfo | None = None,
-        *,
-        shift_if_late: bool = True,
     ) -> None:
         self.tz = tz
         self.run_at = run_at
-
-        # Current date and time
-        now = datetime.now(tz=self.tz)
-
-        # Calculate the full datetime for today with the given time
-        self.run_at_datetime = datetime.combine(now.date(), self.run_at, tzinfo=self.tz)
-
-        # If the calculated run_at time is in the past, shift it to the next day
-        if self.run_at_datetime <= now and shift_if_late:
-            logger.info(
-                f"Scheduled time {self.run_at} has already passed today. Task will be rescheduled for tomorrow."
-            )
-            self.run_at_datetime += timedelta(days=1)
 
     def __repr__(self) -> str:
         s = f"{self.__class__.__name__}(run_at={self.run_at}"
@@ -92,14 +77,17 @@ class ScheduleOnce(ScheduleEntry):
         s += ")"
         return s
 
+    def __hash__(self) -> int:
+        return hash(("once", self.run_at, self.tz))
+
     def next_many(self, n: int = 1, pivot: datetime | None = None) -> tuple[datetime, ...]:
         """Return the next execution time if it's in the future, otherwise return an empty tuple."""
         if pivot is None:
             pivot = datetime.now(tz=self.tz)
 
-        # If the run_at_datetime is still in the future, return it as a tuple
-        if self.run_at_datetime > pivot:
-            return (self.run_at_datetime,)
+        # If the run_at is still in the future, return it as a tuple
+        if self.run_at > pivot:
+            return (self.run_at,)
 
         # If the execution time has passed, return an empty tuple
         return ()
@@ -109,9 +97,9 @@ class ScheduleOnce(ScheduleEntry):
         if pivot is None:
             pivot = datetime.now(tz=self.tz)
 
-        # If the run_at_datetime is in the past, return it as a tuple
-        if self.run_at_datetime <= pivot:
-            return (self.run_at_datetime,)
+        # If the run_at is in the past, return it as a tuple
+        if self.run_at <= pivot:
+            return (self.run_at,)
 
         # If the execution time hasn't happened yet, return an empty tuple
         return ()
@@ -254,8 +242,8 @@ class SchedulerTask:
             fetch_next_time = True
 
             if not next_run:
-                logger.debug("No next runs for task", task=self)
-                break
+                logger.debug("Task executed last time", task=self)
+                return
 
             seconds_until_next_run = max(
                 (next_run - datetime.now(self.tz) + timedelta(milliseconds=1)).total_seconds(), 0
@@ -269,22 +257,8 @@ class SchedulerTask:
                 fetch_next_time = False
                 continue
 
-            # Wrapped like so, coro will never raise error, except canceled error
-            wrapped: Wrapper = ReliableWrapper(
-                self.coro,
-                max_retries=3,
-                silence_exceptions=(Exception,),
-                always_raise_exceptions=(asyncio.CancelledError,),  # type: ignore
-            )
-            if next_next := self.schedule.next():
-                # TODO: estimate avg execution time for task and use it as delta in run_until
-                wrapped = TimeoutWrapper(wrapped, run_until=next_next - timedelta(milliseconds=10), tz=self.tz)
-
-            # wrapped = StopCancellationWrapper(wrapped, stop_event=stop_event)
-            # return await self.coro()
-
             stop_task = asyncio.create_task(stop_event.wait())
-            wrapped_task = asyncio.create_task(wrapped())  # type: ignore
+            wrapped_task = asyncio.create_task(self.execute())  # type: ignore
 
             done, pending = await asyncio.wait([stop_task, wrapped_task], return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
@@ -305,7 +279,17 @@ class SchedulerTask:
                         raise
 
     async def execute(self):
-        return await self.coro()
+        # Wrapped like so, coro will never raise error, except canceled error
+        wrapped = ReliableWrapper(
+            self.coro,
+            max_retries=3,
+            silence_exceptions=(Exception,),
+            always_raise_exceptions=(asyncio.CancelledError,),  # type: ignore
+        )
+        if next_next := self.schedule.next():
+            # TODO: estimate avg execution time for task and use it as delta in run_until
+            wrapped = TimeoutWrapper(wrapped, run_until=next_next - timedelta(milliseconds=10), tz=self.tz)
+        await wrapped()
 
 
 class Scheduler:
@@ -350,8 +334,21 @@ class Scheduler:
         tags: set[str] | None = None,
         shift_if_late: bool = False,
     ) -> SchedulerTask:
+        # Current date and time
+        now = datetime.now(tz=self.tz)
+
+        # Calculate the full datetime for today with the given time
+        run_at_datetime = datetime.combine(now.date(), run_at, tzinfo=self.tz)
+
+        # If the calculated run_at time is in the past, shift it to the next day
+        if run_at_datetime <= now and shift_if_late:
+            logger.info(
+                f"Scheduled time {run_at} has already passed today. Task will be rescheduled for tomorrow."
+            )
+            run_at_datetime += timedelta(days=1)
+
         task = SchedulerTask(
-            schedule=ScheduleOnce(run_at=run_at, tz=self.tz, shift_if_late=shift_if_late),
+            schedule=ScheduleOnce(run_at=run_at_datetime, tz=self.tz),
             coro=coro,
             alias=self._make_alias(coro, alias),
             tags=tags or set(),

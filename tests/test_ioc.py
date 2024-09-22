@@ -1,6 +1,6 @@
 import pytest
 
-from ioc import IOC, Factory, Singleton, SingletonFactory
+from hueplanner.ioc import IOC, Factory, Singleton, SingletonFactory
 
 
 def test_singleton_declaration():

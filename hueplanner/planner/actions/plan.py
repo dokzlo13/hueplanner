@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 
 import structlog
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 
 from hueplanner.event_listener import HueEventStreamListener
 from hueplanner.ioc import IOC
@@ -21,10 +20,6 @@ logger = structlog.getLogger(__name__)
 class PlanActionReEvaluatePlan(PlanAction, Serializable):
     reset_schedule: bool = False
     reset_event_listeners: bool = False
-
-    class _Model(BaseModel):
-        reset_schedule: bool = False
-        reset_event_listeners: bool = False
 
     async def define_action(self) -> EvaluatedAction:
 

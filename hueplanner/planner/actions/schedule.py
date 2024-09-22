@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 import structlog
-from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
 
 from hueplanner.planner.serializable import Serializable
 from hueplanner.scheduler import Scheduler, SchedulerTask
@@ -21,14 +21,16 @@ class ClosestScheduleRunStrategy(Enum):
     NEXT_PREV = "NEXT_PREV"
 
 
-def get_closest_prev(tasks: tuple[SchedulerTask, ...], overlap: bool) -> SchedulerTask | None:
+def get_closest_prev(
+    tasks: tuple[SchedulerTask, ...], overlap: bool, pivot: datetime | None = None
+) -> SchedulerTask | None:
     # Initially try to find tasks with valid `prev()` values
-    valid_tasks = [task for task in tasks if task.schedule.prev() is not None]
+    valid_tasks = [task for task in tasks if task.schedule.prev(pivot) is not None]
     using_prev = True  # Flag to indicate if we're using `prev()`
 
     if not valid_tasks and overlap:
         # If no valid previous tasks and overlap is allowed, try using `next()` instead
-        valid_tasks = [task for task in tasks if task.schedule.next() is not None]
+        valid_tasks = [task for task in tasks if task.schedule.next(pivot) is not None]
         using_prev = False  # We are now using `next()` values
 
     if not valid_tasks:
@@ -36,21 +38,23 @@ def get_closest_prev(tasks: tuple[SchedulerTask, ...], overlap: bool) -> Schedul
 
     # Sort depending on whether we are using `prev()` or `next()`
     if using_prev:
-        valid_tasks.sort(key=lambda t: t.schedule.prev(), reverse=True)  # Sort by `prev()` (most recent first)
+        valid_tasks.sort(key=lambda t: t.schedule.prev(pivot), reverse=True)  # Sort by `prev()` (most recent first)
     else:
-        valid_tasks.sort(key=lambda t: t.schedule.next())  # Sort by `next()` (soonest first)
+        valid_tasks.sort(key=lambda t: t.schedule.next(pivot))  # Sort by `next()` (soonest first)
 
     return valid_tasks[0] if valid_tasks else None
 
 
-def get_closest_next(tasks: tuple[SchedulerTask, ...], overlap: bool) -> SchedulerTask | None:
+def get_closest_next(
+    tasks: tuple[SchedulerTask, ...], overlap: bool, pivot: datetime | None = None
+) -> SchedulerTask | None:
     # Initially try to find tasks with valid `next()` values
-    valid_tasks = [task for task in tasks if task.schedule.next() is not None]
+    valid_tasks = [task for task in tasks if task.schedule.next(pivot) is not None]
     using_next = True  # Flag to indicate if we're using `next()`
 
     if not valid_tasks and overlap:
         # If no valid next tasks and overlap is allowed, try using `prev()` instead
-        valid_tasks = [task for task in tasks if task.schedule.prev() is not None]
+        valid_tasks = [task for task in tasks if task.schedule.prev(pivot) is not None]
         using_next = False  # We are now using `prev()` values
 
     if not valid_tasks:
@@ -58,31 +62,35 @@ def get_closest_next(tasks: tuple[SchedulerTask, ...], overlap: bool) -> Schedul
 
     # Sort depending on whether we are using `next()` or `prev()`
     if using_next:
-        valid_tasks.sort(key=lambda t: t.schedule.next())  # Sort by `next()` (soonest first)
+        valid_tasks.sort(key=lambda t: t.schedule.next(pivot))  # Sort by `next()` (soonest first)
     else:
-        valid_tasks.sort(key=lambda t: t.schedule.prev(), reverse=True)  # Sort by `prev()` (most recent first)
+        valid_tasks.sort(key=lambda t: t.schedule.prev(pivot), reverse=True)  # Sort by `prev()` (most recent first)
 
     return valid_tasks[0] if valid_tasks else None
 
 
-def get_closest_next_prev(tasks: tuple[SchedulerTask, ...], overlap: bool) -> SchedulerTask | None:
+def get_closest_next_prev(
+    tasks: tuple[SchedulerTask, ...], overlap: bool, pivot: datetime | None = None
+) -> SchedulerTask | None:
     # Try to find the closest previous task
-    prev_task = get_closest_next(tasks, overlap)
+    prev_task = get_closest_next(tasks, overlap, pivot)
     if prev_task is not None:
         return prev_task
 
     # If no previous task, fallback to the closest next task
-    return get_closest_prev(tasks, overlap)
+    return get_closest_prev(tasks, overlap, pivot)
 
 
-def get_closest_prev_next(tasks: tuple[SchedulerTask, ...], overlap: bool) -> SchedulerTask | None:
+def get_closest_prev_next(
+    tasks: tuple[SchedulerTask, ...], overlap: bool, pivot: datetime | None = None
+) -> SchedulerTask | None:
     # Try to find the closest next task
-    next_task = get_closest_prev(tasks, overlap)
+    next_task = get_closest_prev(tasks, overlap, pivot)
     if next_task is not None:
         return next_task
 
     # If no next task, fallback to the closest previous task
-    return get_closest_next(tasks, overlap)
+    return get_closest_next(tasks, overlap, pivot)
 
 
 STRATEGIES = {
@@ -98,11 +106,6 @@ class PlanActionRunClosestSchedule(PlanAction, Serializable):
     strategy: ClosestScheduleRunStrategy
     allow_overlap: bool = False
     scheduler_tags: set[str] | None = None
-
-    class _Model(BaseModel):
-        strategy: ClosestScheduleRunStrategy
-        allow_overlap: bool = False
-        scheduler_tags: set[str] | None = None
 
     async def define_action(self) -> EvaluatedAction:
         strategy = STRATEGIES[self.strategy]

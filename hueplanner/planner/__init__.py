@@ -6,13 +6,20 @@ from .actions import (
     PlanActionPrintSchedule,
     PlanActionReEvaluatePlan,
     PlanActionRunClosestSchedule,
+    PlanActionRunIf,
     PlanActionSequence,
     PlanActionStoreSceneById,
     PlanActionStoreSceneByName,
     PlanActionToggleStoredScene,
     PlanActionUpdateLightV2,
-    PlanActionWithEvaluationCondition,
-    PlanActionWithRuntimeCondition,
+)
+from .conditions import (
+    EvaluatedCondition,
+    PlanCondition,
+    PlanConditionAnd,
+    PlanConditionContainer,
+    PlanConditionDBKeyNotSet,
+    PlanConditionOr,
 )
 from .planner import Plan, PlanEntry, Planner
 from .triggers import (
@@ -37,10 +44,9 @@ ACTION_CLASSES = [
     PlanActionReEvaluatePlan,
     PlanActionRunClosestSchedule,
     PlanActionUpdateLightV2,
+    PlanActionRunIf,
     ## This cannot be parsed from config yet
     # PlanActionCallback,
-    # PlanActionWithEvaluationCondition,
-    # PlanActionWithRuntimeCondition,
 ]
 
 TRIGGER_CLASSES = [
@@ -51,4 +57,10 @@ TRIGGER_CLASSES = [
     PlanTriggerDaily,
     PlanTriggerHourly,
     PlanTriggerMinutely,
+]
+
+CONDITION_CLASSES = [
+    PlanConditionAnd,
+    PlanConditionOr,
+    PlanConditionDBKeyNotSet,
 ]
