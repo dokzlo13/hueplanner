@@ -149,7 +149,8 @@ Archetype = Literal[
 
 # Brightness = Annotated[float, Gt(0), Le(100)]
 Brightness = float
-Mirek = Annotated[int, Ge(153), Le(500)]
+# Mirek = Annotated[int, Ge(153), Le(500)]
+Mirek = int
 PositiveFloat = Annotated[float, Gt(0), Le(100)]
 
 
