@@ -5,7 +5,9 @@ import structlog
 import yarl
 
 from .event_stream import HueEventStream
-from .models.light import LightGetResponse, LightUpdateRequest, LightUpdateResponse
+from .models.light import Light, LightGetResponse, LightUpdateRequest, LightUpdateResponse
+from .models.scene import Scene, SceneGetResponse
+from .models.zone import Zone, ZoneGetResponse
 
 logger = structlog.getLogger(__name__)
 
@@ -46,17 +48,19 @@ class HueBridgeV2:
             await self._session.close()
             self._session = None
 
-    async def get_lights(self) -> LightGetResponse:
+    async def get_lights(self) -> list[Light]:
         resp = await self.session.get("/clip/v2/resource/light")
         resp.raise_for_status()
         data = await resp.json()
-        return LightGetResponse.model_validate(data)
+        return LightGetResponse.model_validate(data).data
 
-    async def get_light(self, id: str) -> LightGetResponse:
+    async def get_light(self, id: str) -> Light:
         resp = await self.session.get(f"/clip/v2/resource/light/{id}")
         resp.raise_for_status()
         data = await resp.json()
-        return LightGetResponse.model_validate(data)
+        data = LightGetResponse.model_validate(data).data
+        assert len(data) >= 1, "Not Found"
+        return data[0]
 
     async def update_light(self, id: str, update: LightUpdateRequest) -> LightUpdateResponse:
         resp = await self.session.put(
@@ -77,3 +81,77 @@ class HueBridgeV2:
                 )
             )
         )
+
+    # FIXME: Under maintenance
+    async def get_scenes(self) -> list[Scene]:
+        resp = await self.session.get(
+            "/clip/v2/resource/scene",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        # TODO: proper error handling
+        return SceneGetResponse.model_validate(data).data
+
+    async def get_scene(self, id: str) -> Scene:
+        resp = await self.session.get(
+            f"/clip/v2/resource/scene/{id}",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        # TODO: proper error handling
+        data = SceneGetResponse.model_validate(data).data
+        assert len(data) >= 1, "Not Found"
+        return data[0]
+
+    async def get_zones(self) -> list[Zone]:
+        resp = await self.session.get(
+            "/clip/v2/resource/zone",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        return ZoneGetResponse.model_validate(data).data
+
+    async def get_zone(self, id: str) -> Zone:
+        resp = await self.session.get(
+            f"/clip/v2/resource/zone/{id}",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        # TODO: proper error handling
+        data = ZoneGetResponse.model_validate(data).data
+        assert len(data) >= 1, "Not Found"
+        return data[0]
+
+    # - - -
+
+    async def get_grouped_lights(self):
+        resp = await self.session.get(
+            "/clip/v2/resource/grouped_light",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        return data
+
+    async def get_grouped_light(self, id: str):
+        resp = await self.session.get(
+            f"/clip/v2/resource/grouped_light/{id}",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        return data
+
+    async def get_devices(self):
+        resp = await self.session.get(
+            "/clip/v2/resource/device",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        return data
+
+    async def get_device(self, id: str):
+        resp = await self.session.get(
+            f"/clip/v2/resource/device/{id}",
+        )
+        resp.raise_for_status()
+        data = await resp.json()
+        return data

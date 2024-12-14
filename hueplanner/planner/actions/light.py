@@ -26,6 +26,7 @@ class PlanActionUpdateLightV2(PlanAction, Serializable):
                 response = await hue_v2.update_light(id=self.id, update=self.update)
             except client_exceptions.ClientResponseError:
                 logger.exception("Failed to update light")
+                return
             logger.info("Light updated", response=repr(response))
 
         return update_light

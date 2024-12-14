@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+# TODO: Make full schema for this one
 HueEventData = dict[str, Any]
 
 

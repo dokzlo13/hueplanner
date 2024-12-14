@@ -8,7 +8,7 @@ from typing import Awaitable, Callable, Protocol
 
 import structlog
 
-from hueplanner.wrappers import ReliableWrapper, TimeoutWrapper, Wrapper
+from hueplanner.wrappers import ReliableWrapper, TimeoutWrapper
 
 # Setup structlog for structured logging
 logger = structlog.getLogger(__name__)
@@ -246,13 +246,14 @@ class SchedulerTask:
                 return
 
             seconds_until_next_run = max(
-                (next_run - datetime.now(self.tz) + timedelta(milliseconds=1)).total_seconds(), 0
+                (next_run - datetime.now(self.tz) + timedelta(milliseconds=1)).total_seconds(),
+                0,
             )
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=seconds_until_next_run)
                 return
 
-            if datetime.now(self.tz) < next_run:
+            if datetime.now(self.tz) < next_run - timedelta(seconds=1.5):  # Some tolerance
                 logger.warning("Some task execution time drifting happens, please adjust your schedule")  # wat?
                 fetch_next_time = False
                 continue
@@ -342,9 +343,7 @@ class Scheduler:
 
         # If the calculated run_at time is in the past, shift it to the next day
         if run_at_datetime <= now and shift_if_late:
-            logger.info(
-                f"Scheduled time {run_at} has already passed today. Task will be rescheduled for tomorrow."
-            )
+            logger.info(f"Scheduled time {run_at} has already passed today. Task will be rescheduled for tomorrow.")
             run_at_datetime += timedelta(days=1)
 
         task = SchedulerTask(

@@ -1,6 +1,7 @@
 from .actions import (
     PlanAction,
     PlanActionCallback,
+    PlanActionDelayed,
     PlanActionFlushDb,
     PlanActionPopulateGeoVariables,
     PlanActionPrintSchedule,
@@ -10,6 +11,7 @@ from .actions import (
     PlanActionSequence,
     PlanActionStoreSceneById,
     PlanActionStoreSceneByName,
+    PlanActionSyncScene,
     PlanActionToggleStoredScene,
     PlanActionUpdateLightV2,
 )
@@ -24,6 +26,7 @@ from .conditions import (
 from .planner import Plan, PlanEntry, Planner
 from .triggers import (
     PlanTrigger,
+    PlanTriggerConnectivity,
     PlanTriggerDaily,
     PlanTriggerHourly,
     PlanTriggerImmediately,
@@ -45,6 +48,8 @@ ACTION_CLASSES = [
     PlanActionRunClosestSchedule,
     PlanActionUpdateLightV2,
     PlanActionRunIf,
+    PlanActionSyncScene,
+    PlanActionDelayed,
     ## This cannot be parsed from config yet
     # PlanActionCallback,
 ]
@@ -57,6 +62,7 @@ TRIGGER_CLASSES = [
     PlanTriggerDaily,
     PlanTriggerHourly,
     PlanTriggerMinutely,
+    PlanTriggerConnectivity,
 ]
 
 CONDITION_CLASSES = [

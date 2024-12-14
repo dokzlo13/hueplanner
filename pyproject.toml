@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hueplanner"
-version = "0.2.0"
+version = "0.3.0"
 description = ""
 authors = ["Alex Zakharov <dokzlo13@gmail.com>"]
 
@@ -13,7 +13,7 @@ geopy = "^2.4.1"
 timezonefinder = "^6.2.0"
 environs = "^11.0.0"
 structlog = "^24.4.0"
-uvloop = "^0.20.0"
+uvloop = "^0.21.0"
 tzdata = "^2024.1"
 aiosqlite = "^0.20.0"
 pyyaml = "^6.0.1"
@@ -25,7 +25,7 @@ pytimeparse2 = "^1.7.1"
 
 [tool.poetry.dev-dependencies]
 pytest = "^8.3.3"
-pytest-asyncio = "^0.24.0"
+pytest-asyncio = "^0.25.0"
 black = "^24.8.0"
 isort = "^5.10.1"
 bandit = "^1.7.4"

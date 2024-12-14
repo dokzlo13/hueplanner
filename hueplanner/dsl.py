@@ -9,6 +9,7 @@ from .planner import (
     CONDITION_CLASSES,
     TRIGGER_CLASSES,
     PlanAction,
+    PlanActionDelayed,
     PlanActionRunIf,
     PlanActionSequence,
     PlanCondition,
@@ -47,6 +48,8 @@ def _load_action(action_data: dict[str, Any]) -> PlanAction:
         action = _load_action_sequence(args)
     elif action_class is PlanActionRunIf:
         action = _load_if_action(args)
+    elif action_class is PlanActionDelayed:
+        action = _load_delayed_action(args)
     else:
         action = action_class.loads(args)
     return action  # type: ignore
@@ -62,7 +65,7 @@ def _load_action_sequence(entries: list[dict[str, Any]]) -> PlanActionSequence:
     items: list[PlanAction] = []
     for entry in entries:
         items.append(_load_action(entry))
-    return PlanActionSequence(*items)
+    return PlanActionSequence(*items)  # type: ignore
 
 
 def _load_condition_sequence(
@@ -71,7 +74,7 @@ def _load_condition_sequence(
     items: list[PlanCondition] = []
     for entry in entries:
         items.append(_load_condition(entry))
-    return sequence_class(*items)
+    return sequence_class(*items)  # type: ignore
 
 
 def _load_condition(condition_data: dict[str, Any]) -> PlanCondition:
@@ -88,6 +91,11 @@ def _load_if_action(args: dict[str, Any]) -> PlanActionRunIf:
     action = _load_action(args["action"])
     condition = _load_condition(args["condition"])
     return PlanActionRunIf(condition=condition, action=action)
+
+
+def _load_delayed_action(args: dict[str, Any]) -> PlanActionDelayed:
+    action = _load_action(args["action"])
+    return PlanActionDelayed(action=action, delay=args["delay"])
 
 
 def load_plan_entry(entry: dict[str, Any]) -> PlanEntry:

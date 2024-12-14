@@ -44,3 +44,21 @@ class PlanTriggerOnHueButtonEvent(PlanTriggerOnHueEvent, Serializable):
                     if report["event"] == self.action:
                         return True
         return False
+
+
+@dataclass
+class PlanTriggerConnectivity(PlanTriggerOnHueEvent, Serializable):
+    status: str
+    id: str | None = None
+
+    async def _check(self, hevent: HueEvent) -> bool:
+        for event in hevent.data:
+            for data in event["data"]:
+                if data["type"] == "zigbee_connectivity":
+                    if data["status"] != self.status:
+                        return False
+                    if not self.id:
+                        return True
+                    return self.id == data["id"]
+
+        return False

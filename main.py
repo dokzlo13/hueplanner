@@ -51,14 +51,10 @@ async def main(loop):
     service_ready.clear()
 
     async def healthcheck_live(context):
-        if stop_event.is_set():
-            return False
-        return True
+        return not stop_event.is_set()
 
     async def healthcheck_ready(context):
-        if service_ready.is_set():
-            return True
-        return False
+        return bool(service_ready.is_set())
 
     # App termination handler
     def stop_all() -> None:

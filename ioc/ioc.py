@@ -10,7 +10,9 @@ from types import UnionType
 from typing import (
     Any,
     Callable,
+    Dict,
     Protocol,
+    Type,
     Union,
     get_args,
     get_origin,
@@ -30,7 +32,7 @@ class _Signature:
     target: Any
 
 
-Constructable = Callable[..., Any] | type[Any]
+Constructable = Union[Callable[..., Any], Type[Any]]
 
 
 class IocError(Exception):
@@ -44,8 +46,11 @@ class IocResolutionFailed(IocError):
 @runtime_checkable
 class Provider(Protocol):
     @abstractmethod
-    def construct(self, resolution_context: "ResolutionContext") -> Any:
-        pass
+    def construct(self, resolution_context: "ResolutionContext") -> Any: ...
+
+    @abstractmethod
+    @classmethod
+    def from_(cls, entry: Any) -> Provider: ...
 
 
 class Singleton(Provider):
@@ -53,6 +58,10 @@ class Singleton(Provider):
         if is_function_or_class(instance):
             raise IocError("Singleton entry should be initialized object, not function/class")
         self.instance = instance
+
+    @classmethod
+    def from_(cls, entry: Any) -> Singleton:
+        return cls(entry)
 
     def construct(self, resolution_context: "ResolutionContext") -> Any:
         logger.debug("Singleton reused", instance=self.instance)
@@ -68,9 +77,12 @@ class Factory(Provider):
         self.allow_inject = allow_inject
         if not is_function_or_class(factory):
             raise IocError(f"Factory entry should be function or class, not {type(factory)}")
-
         if not self.allow_inject and has_required_args(self.factory):
             raise IocError("Factory function should be injectable or not have required parameters")
+
+    @classmethod
+    def from_(cls, entry: Any) -> Factory:
+        return cls(entry)
 
     def construct(self, resolution_context: "ResolutionContext") -> Any:
         if self.allow_inject:
@@ -91,6 +103,12 @@ class SingletonFactory(Provider):
         self.factory = factory
         self._evaluated = self._sentinel
 
+    @classmethod
+    def from_(cls, entry: Any) -> SingletonFactory:
+        if isinstance(entry, Factory):
+            return cls(entry)
+        return cls(Factory(entry))
+
     def construct(self, resolution_context: "ResolutionContext") -> Any:
         if self._evaluated is not self._sentinel:
             logger.debug("Singleton reused", instance=self._evaluated)
@@ -100,7 +118,7 @@ class SingletonFactory(Provider):
         return self._evaluated
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.factory!r})"
+        return f"{self.__class__.__name__}({repr(self.factory)})"
 
 
 class ResolutionContext:
@@ -137,7 +155,9 @@ class ResolutionContext:
 def is_function_or_class(variable):
     if isfunction(variable):
         return True
-    return bool(isclass(variable))
+    if isclass(variable):
+        return True
+    return False
 
 
 # Helper function to check if the type is a union with None, 3.11+ only
@@ -169,7 +189,10 @@ def get_optional_real_type(typ):
 
 def has_required_args(factory: Constructable) -> bool:
     # Get the correct callable to inspect: if it's a class, inspect its __init__ method
-    signature = inspect.signature(factory.__init__) if inspect.isclass(factory) else inspect.signature(factory)
+    if inspect.isclass(factory):
+        signature = inspect.signature(factory.__init__)
+    else:
+        signature = inspect.signature(factory)
 
     # Loop through the parameters in the signature
     for param in signature.parameters.values():
@@ -252,9 +275,9 @@ def normalize_args(
 
 class IOC:
     def __init__(self) -> None:
-        self._registry: dict[type[Any], Provider] = {}
+        self._registry: Dict[Type[Any], Provider] = {}
 
-    def declare(self, dependency: type[Any], declaration: Provider | Callable[..., Any] | object) -> None:
+    def declare(self, dependency: Type[Any], declaration: Union[Provider, Callable[..., Any], object]) -> None:
         if isinstance(declaration, Provider):
             self._registry[dependency] = declaration
 
@@ -290,9 +313,9 @@ class IOC:
             self._registry[type(obj)] = Singleton(obj)
             return
 
-        raise IocError("Auto-declared entry must be a callable, instance of class or class.")
+        raise IocError("Auto-declared entry must be type hinted a callable, class (type) or instance of class")
 
-    def resolve(self, typ: type[Any]) -> Any:
+    def resolve(self, typ: Type[Any]):
         return self._resolve_dependency(typ, ResolutionContext(self))
 
     def make(self, target: Constructable, *args, **kwargs) -> Any:
@@ -350,20 +373,16 @@ class IOC:
         for arg_name, arg_type in args.items():
             try:
                 args_resolved[arg_name] = self._resolve_dependency(arg_type, resolution_context)
-            except IocResolutionFailed as ex:  # noqa: PERF203
+            except IocResolutionFailed as ex:
                 if strict_resolve:
-                    raise IocResolutionFailed(
-                        f"Failed to make {sign.target!r}, cannot resolve {arg_name!r}: {ex!s}"
-                    ) from ex
+                    raise IocResolutionFailed(f"Failed to make {sign.target!r}, cannot resolve {arg_name!r}: {str(ex)}")
 
         for kwarg_name, kwarg_type in kwargs.items():
             try:
                 kwargs_resolved[kwarg_name] = self._resolve_dependency(kwarg_type, resolution_context)
-            except IocResolutionFailed as ex:  # noqa: PERF203
+            except IocResolutionFailed as ex:
                 if strict_resolve:
-                    raise IocResolutionFailed(
-                        f"Failed to make {sign.target!r}, cannot resolve {kwarg_name}: {ex!s}"
-                    ) from ex
+                    raise IocResolutionFailed(f"Failed to make {sign.target!r}, cannot resolve {kwarg_name}: {str(ex)}")
 
         return tuple(args_resolved.values()), kwargs_resolved
 
@@ -398,31 +417,27 @@ class IOC:
                 kwargs[name] = param_type
         return args, kwargs
 
-    # def _make_sign(self, target: Constructable) -> _Signature:
-    #     if isclass(target):
-    #         hints = get_type_hints(target.__init__, localns=locals(), globalns=globals())
-    #     elif callable(target):
-    #         hints = get_type_hints(target)
-    #     else:
-    #         raise IocError(f"Can't resolve type hints for {target!r} of type {type(target)!r}")
-
-    #     return _Signature(
-    #         sig=inspect.signature(target),
-    #         hints=hints,
-    #         target=target,
-    #     )
-
-    # def make_partial(self, target: Constructable) -> Callable[..., Any]:
-    #     args, kwargs = self._resolve_full(
-    #         self._make_sign(target), ResolutionContext(self), strict_resolve=False
-    #     )
-
-    #     # args, kwargs = normalize_args(inspect.signature(target), args, kwargs)
-    #     return partial(target, *args, **kwargs)
-
     def inject(self, fn: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(fn)
         def wrapper(*args, **kwargs) -> Any:
             return self.make(fn, *args, **kwargs)
 
         return wrapper
+
+
+# def foo(a: int, b: int) -> int:
+#     return a + b
+
+
+# Factory.make(foo, a=1, b=resolved(int))
+# Add "resolved()" function to manually provide dependency?
+
+# https://github.com/kodemore/kink
+# https://github.com/bobthemighty/punq
+
+# Add fastapi integration
+
+# Add args/kwargs passing to factory
+
+# c.declare(Annotated[MyDbConnection, mark("db2")], create_conn("url2"))
+# def do_stuff_with_db2(conn: Annotated[MyDbConnection, mark("db2")]):

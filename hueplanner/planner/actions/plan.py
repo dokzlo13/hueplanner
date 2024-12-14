@@ -31,11 +31,10 @@ class PlanActionReEvaluatePlan(PlanAction, Serializable):
         ):
             logger.warning("Plan re-evaluation requested", action=repr(self))
 
-            if self.reset_event_listeners:
-                if event_listener is not None:
-                    logger.info("Resetting HUE EventListener callbacks")
-                    event_listener.clean_callbacks()
-                    logger.info("HUE Event Listener callbacks reset")
+            if self.reset_event_listeners and event_listener is not None:
+                logger.info("Resetting HUE EventListener callbacks")
+                event_listener.clean_callbacks()
+                logger.info("HUE Event Listener callbacks reset")
 
             if self.reset_schedule:
                 logger.info("Resetting Schedule")

@@ -1,4 +1,4 @@
-from .hue_events import PlanTriggerOnHueButtonEvent, PlanTriggerOnHueEvent
+from .hue_events import PlanTriggerConnectivity, PlanTriggerOnHueButtonEvent, PlanTriggerOnHueEvent
 from .imme import PlanTriggerImmediately
 from .interface import PlanTrigger
 from .schedule import (
