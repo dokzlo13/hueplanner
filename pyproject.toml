@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hueplanner"
-version = "0.3.0"
+version = "0.3.2"
 description = ""
 authors = ["Alex Zakharov <dokzlo13@gmail.com>"]
 

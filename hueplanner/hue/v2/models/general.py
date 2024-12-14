@@ -149,8 +149,7 @@ Archetype = Literal[
 
 # Brightness = Annotated[float, Gt(0), Le(100)]
 Brightness = float
-# Mirek = Annotated[int, Ge(153), Le(500)]
-Mirek = int
+Mirek = Annotated[int, Ge(153), Le(500)]
 PositiveFloat = Annotated[float, Gt(0), Le(100)]
 
 
@@ -177,7 +176,7 @@ class MirekSchema(BaseModel):
 
 
 class ColorTemperature(BaseModel):
-    mirek: Mirek
+    mirek: Mirek | None = None
     mirek_valid: bool | None = None
     mirek_schema: MirekSchema | None = None
 
