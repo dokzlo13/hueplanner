@@ -21,9 +21,9 @@ class PlanActionDelayed(PlanAction):
         _action = await ioc.make(self._action.define_action)
 
         async def action():
-            logger.info(f"Awaiting for delay: {self._delay:.4f}s.")
+            logger.info(f"Awaiting for delay: {self._delay:.4f}s. before action", action=self._action)
             await asyncio.sleep(delay=self._delay)
-            logger.info("Executing action")
+            logger.info("Executing action", action=self._action)
             return await ioc.make(_action)
 
         return action

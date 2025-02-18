@@ -18,6 +18,7 @@ logger = structlog.getLogger(__name__)
 class PlanActionSyncScene(PlanAction, Serializable):
     db_key: str
     db: str = "stored_scenes"
+    force: bool = False
 
     @staticmethod
     def scene_action_differs(logger, light: Light, action_data: SceneActionData) -> bool:
@@ -118,7 +119,7 @@ class PlanActionSyncScene(PlanAction, Serializable):
                 log = logger.bind(id_v1=light.id_v1, id_v2=light.id, name=light.metadata.name)
 
                 log.debug("Testing light")
-                if self.scene_action_differs(log, light, targeted_action.action):
+                if self.force or self.scene_action_differs(log, light, targeted_action.action):
                     update = targeted_action.action.as_light_update_request()
                     log.info("Light differs from required, performing update", update=update)
                     res = await hue_v2.update_light(targeted_action.target.rid, update)
